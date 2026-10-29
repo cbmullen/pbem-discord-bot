@@ -3,6 +3,7 @@ import type { GameSnapshot } from "../game/types.js";
 interface ButtonComponent {
   type: 2;
   style: 1 | 2 | 3;
+  disabled?: boolean;
   label: string;
   custom_id: string;
 }
@@ -32,6 +33,8 @@ export function buildGameBoard(
       components: players.slice(index, index + 5).map((player) => ({
         type: 2,
         style: player.status === "pending" ? 1 : 3,
+        disabled:
+          game.activeMode === "consecutive" && player.status === "pending",
         label: `${player.username} - ${player.status}`.slice(0, 80),
         custom_id: `pbem:player:${game.id}:${player.userId}`,
       })),
@@ -54,7 +57,7 @@ export function buildGameBoard(
   }
 
   return {
-    content: `**${game.name}**\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
+    content: `**Playing: ${game.name}**\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
     components,
     allowed_mentions: {
       users: announcePending ? pending.map((player) => player.userId) : [],

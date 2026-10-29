@@ -3,7 +3,11 @@ import test from "node:test";
 import { buildGameBoard } from "./game-board.js";
 import type { GameSnapshot, Player } from "../game/types.js";
 
-function makeSnapshot(mode: "consecutive" | "both", playerCount: number): GameSnapshot {
+function makeSnapshot(
+  mode: "consecutive" | "both",
+  playerCount: number,
+  activeMode: GameSnapshot["game"]["activeMode"] = "consecutive",
+): GameSnapshot {
   const players: Player[] = Array.from({ length: playerCount }, (_, position) => ({
     userId: `user-${position}`,
     username: `Player ${position}`,
@@ -17,7 +21,7 @@ function makeSnapshot(mode: "consecutive" | "both", playerCount: number): GameSn
       id: "game-id",
       name: "Test",
       mode,
-      activeMode: "consecutive",
+      activeMode,
       guildId: "guild-id",
       channelId: "channel-id",
       messageId: null,
@@ -32,14 +36,21 @@ function makeSnapshot(mode: "consecutive" | "both", playerCount: number): GameSn
 test("board components fit Discord's five action rows at maximum roster sizes", () => {
   const consecutive = buildGameBoard(makeSnapshot("consecutive", 25));
   const both = buildGameBoard(makeSnapshot("both", 24));
-  assert.match(consecutive.content, /^\*\*Test\*\*\nPending:/);
+  assert.match(consecutive.content, /^\*\*Playing: Test\*\*\nPending:/);
   assert.doesNotMatch(consecutive.content, /PBEM:|consecutive/);
   assert.equal(consecutive.components.at(0)?.components.at(0)?.style, 1);
   assert.equal(consecutive.components.at(0)?.components.at(1)?.style, 3);
+  assert.equal(consecutive.components.at(0)?.components.at(0)?.disabled, true);
+  assert.equal(consecutive.components.at(0)?.components.at(1)?.disabled, false);
   assert.equal(consecutive.components?.length, 5);
   assert.equal(both.components?.length, 5);
   assert.equal(
     both.components.reduce((total, row) => total + row.components.length, 0),
     25,
   );
+});
+
+test("pending player buttons remain clickable in simultaneous mode", () => {
+  const simultaneous = buildGameBoard(makeSnapshot("both", 2, "simultaneous"));
+  assert.equal(simultaneous.components.at(0)?.components.at(0)?.disabled, false);
 });
