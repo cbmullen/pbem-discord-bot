@@ -7,6 +7,8 @@ import {
 } from "./public-api.js";
 import healthRoute from "../../api/health.js";
 import publicGamesRoute from "../../api/public-games.js";
+import { resolveGuildNames } from "../discord/guild-names.js";
+import { addServerNames } from "./public-games.js";
 
 test("public API responses allow anonymous cross-origin reads without credentials", async () => {
   const response = publicJsonResponse({ status: "healthy" });
@@ -45,4 +47,45 @@ test("public routes reject write methods", async () => {
     }));
     assert.equal(response.status, 405);
   }
+});
+
+test("guild names are resolved using the bot without returning guild IDs in page data", async () => {
+  const guildId = `test-guild-${Date.now()}`;
+  let requestedUrl = "";
+  let authorization = "";
+  const names = await resolveGuildNames([guildId, guildId], "test-token", async (input, init) => {
+    requestedUrl = String(input);
+    authorization = new Headers(init?.headers).get("Authorization") ?? "";
+    return Response.json({ name: "Example server" });
+  });
+
+  assert.equal(names.size, 1);
+  assert.equal(names.get(guildId), "Example server");
+  assert.equal(requestedUrl, `https://discord.com/api/v10/guilds/${guildId}`);
+  assert.equal(authorization, "Bot test-token");
+});
+
+test("missing Discord guilds receive a non-identifying public label", async () => {
+  const guildId = `missing-guild-${Date.now()}`;
+  const names = await resolveGuildNames([guildId], "test-token", async () =>
+    new Response(null, { status: 404 }),
+  );
+  assert.equal(names.get(guildId), "Unavailable server");
+});
+
+test("public game data includes server names without guild IDs", () => {
+  const [game] = addServerNames(
+    [{
+      guildId: "private-guild-id",
+      name: "Example game",
+      mode: "consecutive",
+      activeMode: "consecutive",
+      createdAt: "2026-10-29T12:00:00.000Z",
+      players: [],
+    }],
+    new Map([["private-guild-id", "Example server"]]),
+  );
+  assert.equal(game?.serverName, "Example server");
+  assert.equal(game?.name, "Example game");
+  assert.equal("guildId" in (game ?? {}), false);
 });

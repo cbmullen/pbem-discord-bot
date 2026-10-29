@@ -39,6 +39,7 @@ export interface NewGame {
 }
 
 export interface PublicGameStatus {
+  guildId: string;
   name: string;
   mode: GameMode;
   activeMode: ActiveMode;
@@ -198,11 +199,12 @@ export function openRepository(databaseUrl: string) {
     async listPublicGames(): Promise<PublicGameStatus[]> {
       await ensureSchema();
       const rows = (await sql`
-        SELECT name, mode, active_mode, created_at, players
+        SELECT guild_id, name, mode, active_mode, created_at, players
         FROM pbem_games
         WHERE status = 'active'
         ORDER BY lower(name), created_at
       `) as Array<{
+        guild_id: string;
         name: string;
         mode: GameMode;
         active_mode: ActiveMode;
@@ -210,6 +212,7 @@ export function openRepository(databaseUrl: string) {
         players: Player[] | string;
       }>;
       return rows.map((row) => ({
+        guildId: row.guild_id,
         name: row.name,
         mode: row.mode,
         activeMode: row.active_mode,
