@@ -170,6 +170,22 @@ export function openRepository(databaseUrl: string) {
       return row ? mapSnapshot(row) : null;
     },
 
+    async replaceBoardMessageId(
+      gameId: string,
+      previousMessageId: string,
+      nextMessageId: string,
+    ): Promise<boolean> {
+      await ensureSchema();
+      const rows = (await sql`
+        UPDATE pbem_games
+        SET message_id = ${nextMessageId}, version = version + 1
+        WHERE id = ${gameId} AND status = 'active'
+          AND message_id = ${previousMessageId}
+        RETURNING id
+      `) as Array<{ id: string }>;
+      return rows.length > 0;
+    },
+
     async getActiveGameByName(
       guildId: string,
       channelId: string,

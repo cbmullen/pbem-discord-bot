@@ -429,6 +429,8 @@ local test is finished.
 - A game name is reserved while its setup or active game record exists. Failed
   setup attempts are removed, and deleting an active game frees the name.
 - Anyone can click any player's status button.
+- Clicking a game-board button reposts the updated board at the end of the
+  channel conversation, replacing the previous board message.
 - Consecutive games start with the first selected player pending. Clicking a
   player's button makes that player the sole pending player.
 - Simultaneous games start with everyone pending. Clicking toggles that player's

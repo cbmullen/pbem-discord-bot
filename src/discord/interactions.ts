@@ -498,6 +498,59 @@ async function sendPendingReminder(
   });
 }
 
+async function moveUpdatedBoardToLatest(
+  repository: ReturnType<typeof openRepository>,
+  gameId: string,
+  token: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const snapshot = await repository.getSnapshot(gameId);
+    if (
+      !snapshot ||
+      snapshot.game.status !== "active" ||
+      !snapshot.game.messageId
+    ) {
+      return;
+    }
+
+    const previousMessageId = snapshot.game.messageId;
+    const nextMessage = await postChannelMessage(
+      snapshot.game.channelId,
+      token,
+      buildGameBoard(snapshot),
+    );
+    const replaced = await repository.replaceBoardMessageId(
+      gameId,
+      previousMessageId,
+      nextMessage.id,
+    );
+    if (replaced) {
+      try {
+        await deleteChannelMessage(
+          snapshot.game.channelId,
+          previousMessageId,
+          token,
+        );
+      } catch (error) {
+        console.error("Could not remove the previous PBEM board message:", error);
+      }
+      return;
+    }
+
+    try {
+      await deleteChannelMessage(
+        snapshot.game.channelId,
+        nextMessage.id,
+        token,
+      );
+    } catch (error) {
+      console.error("Could not remove an outdated replacement PBEM board:", error);
+    }
+  }
+
+  throw new Error("Could not move the PBEM board because it changed repeatedly.");
+}
+
 async function processBoardInteraction(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -529,11 +582,7 @@ async function processBoardInteraction(
     action === "mode"
       ? await repository.switchGameMode(gameId, actorId)
       : await repository.applyPlayerSelection(gameId, playerId ?? "", actorId);
-  await discordRequest(
-    `/channels/${channelId}/messages/${messageId}`,
-    config.botToken,
-    { method: "PATCH", body: JSON.stringify(buildGameBoard(result)) },
-  );
+  await moveUpdatedBoardToLatest(repository, gameId, config.botToken);
 }
 
 async function processReminder(
