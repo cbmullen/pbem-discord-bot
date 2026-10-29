@@ -39,6 +39,29 @@ export interface TransitionResult extends GameSnapshot {
   eventType: string;
 }
 
+export class GameNameInUseError extends Error {
+  constructor() {
+    super("A game with that name already exists on this server.");
+    this.name = "GameNameInUseError";
+  }
+}
+
+export function isGameNameConstraintViolation(error: unknown): boolean {
+  if (
+    !error ||
+    typeof error !== "object" ||
+    !("code" in error) ||
+    !("constraint" in error)
+  ) {
+    return false;
+  }
+  return (
+    error.code === "23505" &&
+    (error.constraint === "pbem_unique_game_name_per_server" ||
+      error.constraint === "pbem_unique_game_name_per_channel")
+  );
+}
+
 function parseJson<T>(value: T | string): T {
   return (typeof value === "string" ? JSON.parse(value) : value) as T;
 }
@@ -84,8 +107,11 @@ export function openRepository(databaseUrl: string) {
           )
         `;
       await sql`
-        CREATE UNIQUE INDEX IF NOT EXISTS pbem_unique_game_name_per_channel
-        ON pbem_games (guild_id, channel_id, lower(name))
+        CREATE UNIQUE INDEX IF NOT EXISTS pbem_unique_game_name_per_server
+        ON pbem_games (guild_id, lower(name))
+      `;
+      await sql`
+        DROP INDEX IF EXISTS pbem_unique_game_name_per_channel
       `;
       })().catch((error: unknown) => {
         schemaPromise = undefined;
@@ -113,23 +139,29 @@ export function openRepository(databaseUrl: string) {
       const id = randomUUID();
       const activeMode: ActiveMode =
         input.mode === "both" ? "consecutive" : input.mode;
-      await sql`
-        INSERT INTO pbem_games (
-          id, name, mode, active_mode, guild_id, channel_id, created_by,
-          created_at, status, events
-        ) VALUES (
-          ${id}, ${input.name}, ${input.mode}, ${activeMode}, ${input.guildId},
-          ${input.channelId}, ${input.createdBy}, ${now}, 'setup',
-          ${JSON.stringify([{ type: "game_created", actorId: input.createdBy, createdAt: now }])}::jsonb
-        )
-      `;
+      try {
+        await sql`
+          INSERT INTO pbem_games (
+            id, name, mode, active_mode, guild_id, channel_id, created_by,
+            created_at, status, events
+          ) VALUES (
+            ${id}, ${input.name}, ${input.mode}, ${activeMode}, ${input.guildId},
+            ${input.channelId}, ${input.createdBy}, ${now}, 'setup',
+            ${JSON.stringify([{ type: "game_created", actorId: input.createdBy, createdAt: now }])}::jsonb
+          )
+        `;
+      } catch (error) {
+        if (isGameNameConstraintViolation(error)) throw new GameNameInUseError();
+        throw error;
+      }
       return id;
     },
 
     async deleteDraft(gameId: string) {
       await ensureSchema();
       await sql`
-        DELETE FROM pbem_games WHERE id = ${gameId} AND status = 'setup'
+        DELETE FROM pbem_games
+        WHERE id = ${gameId} AND status IN ('setup', 'creating')
       `;
     },
 
@@ -149,6 +181,30 @@ export function openRepository(databaseUrl: string) {
         WHERE guild_id = ${guildId} AND channel_id = ${channelId}
           AND status = 'active' AND lower(name) = lower(${name.trim()})
         LIMIT 1
+      `) as GameRow[];
+      return rows[0] ? mapSnapshot(rows[0]) : null;
+    },
+
+    async getActiveGameByNameInGuild(
+      guildId: string,
+      name: string,
+    ): Promise<GameSnapshot | null> {
+      await ensureSchema();
+      const rows = (await sql`
+        SELECT * FROM pbem_games
+        WHERE guild_id = ${guildId}
+          AND status = 'active' AND lower(name) = lower(${name.trim()})
+        LIMIT 1
+      `) as GameRow[];
+      return rows[0] ? mapSnapshot(rows[0]) : null;
+    },
+
+    async deleteActiveGame(gameId: string, guildId: string): Promise<GameSnapshot | null> {
+      await ensureSchema();
+      const rows = (await sql`
+        DELETE FROM pbem_games
+        WHERE id = ${gameId} AND guild_id = ${guildId} AND status = 'active'
+        RETURNING *
       `) as GameRow[];
       return rows[0] ? mapSnapshot(rows[0]) : null;
     },

@@ -1,5 +1,8 @@
 import { createPublicKey, verify } from "node:crypto";
-import { openRepository } from "../database/repository.js";
+import {
+  GameNameInUseError,
+  openRepository,
+} from "../database/repository.js";
 import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
@@ -188,6 +191,30 @@ function interactionUserSelect(
   };
 }
 
+function gameDeletionConfirmation(gameId: string): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 4,
+            label: "Delete game",
+            custom_id: `pbem:delete-confirm:${gameId}`,
+          },
+          {
+            type: 2,
+            style: 2,
+            label: "Cancel",
+            custom_id: `pbem:delete-cancel:${gameId}`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 async function postChannelMessage(
   channelId: string,
   token: string,
@@ -198,6 +225,26 @@ async function postChannelMessage(
     token,
     { method: "POST", body: JSON.stringify(payload) },
   )) as { id: string };
+}
+
+async function deleteChannelMessage(
+  channelId: string,
+  messageId: string,
+  token: string,
+): Promise<void> {
+  const response = await fetch(
+    `${DISCORD_API}/channels/${channelId}/messages/${messageId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bot ${token}` },
+    },
+  );
+  if (response.status === 404) return;
+  if (!response.ok) {
+    throw new Error(
+      `Could not delete the game board (${response.status}): ${await response.text()}`,
+    );
+  }
 }
 
 async function editOriginal(
@@ -240,7 +287,9 @@ async function createGameDraft(
       components: [interactionUserSelect(gameId, maxPlayers)],
     });
   } catch (error) {
-    console.error("Could not create PBEM game setup:", error);
+    if (!(error instanceof GameNameInUseError)) {
+      console.error("Could not create PBEM game setup:", error);
+    }
     if (gameId) {
       try {
         await openRepository(config.databaseUrl).deleteDraft(gameId);
@@ -249,7 +298,10 @@ async function createGameDraft(
       }
     }
     await editOriginal(interaction, config, {
-      content: "The game could not be created. Please try `/pbem` again.",
+      content:
+        error instanceof GameNameInUseError
+          ? "A game with that name already exists on this server. Choose a different name."
+          : "The game could not be created. Please try `/pbem` again.",
       components: [],
     });
   }
@@ -346,9 +398,9 @@ async function setupGameFromUserPicker(
       }
     }
     try {
-      await repository.releaseDraft(gameId);
-    } catch (releaseError) {
-      console.error("Could not release the PBEM setup:", releaseError);
+      await repository.deleteDraft(gameId);
+    } catch (deleteError) {
+      console.error("Could not remove the incomplete PBEM setup:", deleteError);
     }
     await editOriginal(interaction, config, {
       content: "The game could not be completed. Please run `/pbem` again.",
@@ -458,6 +510,75 @@ async function processReminder(
   }
 }
 
+async function prepareGameDeletion(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-delete` in a server.",
+    });
+    return;
+  }
+
+  const snapshot = await openRepository(config.databaseUrl)
+    .getActiveGameByNameInGuild(interaction.guild_id, gameName);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: `Delete **${snapshot.game.name}** and its status board? This cannot be undone.`,
+    ...gameDeletionConfirmation(snapshot.game.id),
+  });
+}
+
+async function processGameDeletion(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string,
+): Promise<void> {
+  if (!interaction.guild_id || !interactionUserId(interaction)) {
+    throw new Error("Game deletion interaction is missing server or user context.");
+  }
+
+  const snapshot = await openRepository(config.databaseUrl)
+    .deleteActiveGame(gameId, interaction.guild_id);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is no longer active. Its name is available again.",
+      components: [],
+    });
+    return;
+  }
+
+  try {
+    if (snapshot.game.messageId) {
+      await deleteChannelMessage(
+        snapshot.game.channelId,
+        snapshot.game.messageId,
+        config.botToken,
+      );
+    }
+  } catch (error) {
+    console.error("Could not remove the deleted PBEM game board:", error);
+    await editOriginal(interaction, config, {
+      content: `Deleted **${snapshot.game.name}** and freed its name, but I could not remove its board message. Check the bot's channel permissions.`,
+      components: [],
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: `Deleted **${snapshot.game.name}** and freed its name.`,
+    components: [],
+  });
+}
+
 function immediateResponse(type: number, data?: Record<string, unknown>): Response {
   return jsonResponse(data ? { type, data } : { type });
 }
@@ -500,6 +621,18 @@ async function handleInteraction(
       const task = processReminder(interaction, config, gameName);
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
+
+    if (commandName === "pbem-delete") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      if (!gameName || gameName.length > 80 || !interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Choose an active game and use `/pbem-delete` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareGameDeletion(interaction, config, gameName);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
   }
 
   if (interaction.type === 4) {
@@ -521,6 +654,16 @@ async function handleInteraction(
     }
 
     const [, action, gameId, playerId] = customId.split(":");
+    if (action === "delete-cancel" && gameId) {
+      return immediateResponse(7, {
+        content: "Game deletion cancelled.",
+        components: [],
+      });
+    }
+    if (action === "delete-confirm" && gameId) {
+      const task = processGameDeletion(interaction, config, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
     if (!gameId || (action !== "player" && action !== "mode")) {
       return immediateResponse(4, { content: "This button is invalid.", flags: EPHEMERAL });
     }

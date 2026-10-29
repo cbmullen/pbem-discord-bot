@@ -285,7 +285,7 @@ commands once using the application ID and bot token.
    npm run register-commands
    ```
 
-8. Look for the success message that says two global application commands were
+8. Look for the success message that says three global application commands were
    registered. If the command reports a Discord error, recheck the application
    ID/token pair in `.env`; they must belong to the same Discord application.
 
@@ -298,7 +298,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem` and `/pbem-remind` are listed.
+`/pbem`, `/pbem-remind`, and `/pbem-delete` are listed.
 
 ## 6. Verify the bot
 
@@ -315,7 +315,9 @@ where the bot is installed, open the slash-command picker and check that
    test the mode-switch button.
 7. Run `/pbem-remind` in the same channel and enter the game name to test the
    manual reminder.
-8. In Neon, open **Tables** and confirm `pbem_games` was created.
+8. Optionally run `/pbem-delete` with the game name, confirm deletion, and
+   verify that the board is removed and the name can be reused.
+9. In Neon, open **Tables** and confirm `pbem_games` was created.
 
 If all these steps work, Discord, Vercel, and Neon are connected. Your computer
 can now be turned off; Vercel handles interactions when Discord sends them.
@@ -399,7 +401,13 @@ local test is finished.
 - `/pbem name mode` creates a game in the current channel and presents a private
   Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game.
 - `/pbem-remind game` manually mentions the pending players for the named game
-  in the current channel. Game names must be unique within a channel.
+  in the current channel. Game names must be unique within a server; matching
+  ignores capitalization.
+- `/pbem-delete game` asks for confirmation, then removes that active game and
+  its board. Any server member can confirm deletion. The command can be run in
+  any channel in that server.
+- A game name is reserved while its setup or active game record exists. Failed
+  setup attempts are removed, and deleting an active game frees the name.
 - Anyone can click any player's status button.
 - Consecutive games start with the first selected player pending. Clicking a
   player's button makes that player the sole pending player.

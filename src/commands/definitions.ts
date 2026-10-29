@@ -38,4 +38,18 @@ export const commands = [
       },
     ],
   },
+  {
+    name: "pbem-delete",
+    description: "Delete a game and its status board",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "The game name in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+      },
+    ],
+  },
 ];
