@@ -1,5 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": null,
   "functions": {
     "api/interactions.ts": {
       "maxDuration": 30

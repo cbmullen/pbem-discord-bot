@@ -171,8 +171,10 @@ connection string you collected in steps 1 and 2.
    TypeScript Vercel Function, not a Next.js or other framework application.
 8. Use these build settings if they are shown:
    - **Install Command:** `npm install`
-   - **Build Command:** `npm run build`
-   - **Output Directory:** leave it blank/default; the function is in `api/`
+   - **Build Command:** this is disabled by `vercel.json`. Do not override it
+     in Project Settings. The `build` script in `package.json` is for local
+     type-checking and does not create deployment output.
+   - **Output Directory:** leave it blank/default.
    - **Development Command:** leave it blank/default
 9. Keep the project on the **Hobby** plan. Do not add a card, upgrade the plan,
    enable paid features, or turn on paid usage for this project.
@@ -329,6 +331,18 @@ can now be turned off; Vercel handles interactions when Discord sends them.
 - Confirm that all four Vercel environment variables were saved for **Production**.
 - After editing environment variables, redeploy so they take effect.
 - In Vercel, open the latest deployment's function logs for errors.
+
+### Vercel reports that the `public` output directory is missing
+
+This app deploys as a Vercel Function in `api/`; it does not generate a static
+site or a `public` build directory. The `build` script in `package.json` only
+type-checks and does not create deployment output. `vercel.json` forces the
+**Other** framework preset and disables that build script so Vercel can package
+the function in `api/`. Commit and push that configuration, then redeploy. If
+the error remains after deploying the new commit, check Vercel's deployment
+details to confirm it used the latest commit and that the project's
+**Build Command**, **Output Directory**, and **Framework Preset** are not
+overriding the repository configuration.
 
 ### Commands do not appear in Discord
 
