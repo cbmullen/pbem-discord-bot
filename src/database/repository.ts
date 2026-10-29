@@ -58,6 +58,7 @@ export interface PublicGameStatus {
   name: string;
   mode: GameMode;
   activeMode: ActiveMode;
+  reminderDays: number;
   createdAt: string;
   players: Array<{
     username: string;
@@ -306,7 +307,7 @@ export function openRepository(databaseUrl: string) {
     async listPublicGames(): Promise<PublicGameStatus[]> {
       await ensureSchema();
       const rows = (await sql`
-        SELECT guild_id, name, mode, active_mode, created_at, players
+        SELECT guild_id, name, mode, active_mode, reminder_days, created_at, players
         FROM pbem_games
         WHERE status = 'active'
         ORDER BY lower(name), created_at
@@ -315,6 +316,7 @@ export function openRepository(databaseUrl: string) {
         name: string;
         mode: GameMode;
         active_mode: ActiveMode;
+        reminder_days: number;
         created_at: string;
         players: Player[] | string;
       }>;
@@ -323,6 +325,7 @@ export function openRepository(databaseUrl: string) {
         name: row.name,
         mode: row.mode,
         activeMode: row.active_mode,
+        reminderDays: row.reminder_days,
         createdAt: row.created_at,
         players: parseJson<Player[]>(row.players).map((player) => ({
           username: player.username,

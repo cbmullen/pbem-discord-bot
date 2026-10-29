@@ -244,7 +244,8 @@ The same deployment also exposes:
 
 - `GET /api/public-games` — public, read-only active-game and player status for
   the PBEM status page. It returns server names, game names, player display names
-  and statuses, pending timestamps, and active mode. It
+  and statuses, pending timestamps, active mode, and the configured automated
+  reminder threshold. It
   does not return Discord IDs, server/channel IDs, creator IDs, or the interaction
   token. This endpoint intentionally allows cross-origin requests for the public
   notebook page. Anyone can view the returned status data.

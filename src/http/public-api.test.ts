@@ -80,6 +80,7 @@ test("public game data includes server names without guild IDs", () => {
       name: "Example game",
       mode: "consecutive",
       activeMode: "consecutive",
+      reminderDays: 3,
       createdAt: "2026-10-29T12:00:00.000Z",
       players: [],
     }],
@@ -87,5 +88,6 @@ test("public game data includes server names without guild IDs", () => {
   );
   assert.equal(game?.serverName, "Example server");
   assert.equal(game?.name, "Example game");
+  assert.equal(game?.reminderDays, 3);
   assert.equal("guildId" in (game ?? {}), false);
 });
