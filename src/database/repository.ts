@@ -68,7 +68,6 @@ export interface PublicGameStatus {
 }
 
 export interface TransitionResult extends GameSnapshot {
-  notifyUserIds: string[];
   eventType: string;
 }
 
@@ -124,64 +123,7 @@ function mapSnapshot(row: GameRow): GameSnapshot {
 
 export function openRepository(databaseUrl: string) {
   const sql = neon(databaseUrl);
-  let schemaPromise: Promise<void> | undefined;
-
-  function ensureSchema(): Promise<void> {
-    if (!schemaPromise) {
-      schemaPromise = (async () => {
-        await sql`
-          CREATE TABLE IF NOT EXISTS pbem_games (
-            id uuid PRIMARY KEY,
-            name text NOT NULL,
-            mode text NOT NULL CHECK (mode IN ('consecutive', 'simultaneous', 'both')),
-            active_mode text NOT NULL CHECK (active_mode IN ('consecutive', 'simultaneous')),
-            reminder_days integer NOT NULL DEFAULT 0 CHECK (reminder_days BETWEEN 0 AND 365),
-            guild_id text NOT NULL,
-            channel_id text NOT NULL,
-            message_id text,
-            created_by text NOT NULL,
-            created_at timestamptz NOT NULL,
-            status text NOT NULL CHECK (status IN ('setup', 'creating', 'active')),
-            players jsonb NOT NULL DEFAULT '[]'::jsonb,
-            events jsonb NOT NULL DEFAULT '[]'::jsonb,
-            version integer NOT NULL DEFAULT 0
-          )
-        `;
-        await sql`
-          ALTER TABLE pbem_games
-          ADD COLUMN IF NOT EXISTS reminder_days integer NOT NULL DEFAULT 0
-          CHECK (reminder_days BETWEEN 0 AND 365)
-        `;
-        await sql`
-          ALTER TABLE pbem_games DROP COLUMN IF EXISTS turns_completed
-        `;
-        await sql`
-          CREATE TABLE IF NOT EXISTS pbem_reminder_deliveries (
-            game_id uuid NOT NULL REFERENCES pbem_games(id) ON DELETE CASCADE,
-            user_id text NOT NULL,
-            pending_since timestamptz NOT NULL,
-            claimed_at timestamptz NOT NULL,
-            sent_at timestamptz,
-            PRIMARY KEY (game_id, user_id, pending_since)
-          )
-        `;
-      await sql`
-        CREATE UNIQUE INDEX IF NOT EXISTS pbem_unique_game_name_per_server
-        ON pbem_games (guild_id, lower(name))
-      `;
-      await sql`
-        DROP INDEX IF EXISTS pbem_unique_game_name_per_channel
-      `;
-      })().catch((error: unknown) => {
-        schemaPromise = undefined;
-        throw error;
-      });
-    }
-    return schemaPromise;
-  }
-
   async function getRow(gameId: string): Promise<GameRow | undefined> {
-    await ensureSchema();
     const rows = (await sql`
       SELECT * FROM pbem_games WHERE id = ${gameId} LIMIT 1
     `) as GameRow[];
@@ -189,8 +131,22 @@ export function openRepository(databaseUrl: string) {
   }
 
   const repository = {
+    async claimInteraction(interactionId: string): Promise<boolean> {
+      const rows = (await sql`
+        WITH expired AS (
+          DELETE FROM pbem_processed_interactions
+          WHERE created_at < NOW() - INTERVAL '1 day'
+          RETURNING interaction_id
+        )
+        INSERT INTO pbem_processed_interactions (interaction_id)
+        VALUES (${interactionId})
+        ON CONFLICT (interaction_id) DO NOTHING
+        RETURNING interaction_id
+      `) as Array<{ interaction_id: string }>;
+      return rows.length > 0;
+    },
+
     async createDraft(input: NewGame, now = new Date().toISOString()) {
-      await ensureSchema();
       await sql`
         DELETE FROM pbem_games
         WHERE status <> 'active' AND created_at < NOW() - INTERVAL '24 hours'
@@ -217,7 +173,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async deleteDraft(gameId: string) {
-      await ensureSchema();
       await sql`
         DELETE FROM pbem_games
         WHERE id = ${gameId} AND status IN ('setup', 'creating')
@@ -230,7 +185,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async listDueReminders(now = new Date()): Promise<DueReminder[]> {
-      await ensureSchema();
       const rows = (await sql`
         SELECT * FROM pbem_games
         WHERE status = 'active' AND reminder_days > 0
@@ -256,7 +210,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async claimReminderDelivery(reminder: DueReminder): Promise<boolean> {
-      await ensureSchema();
       const rows = (await sql`
         INSERT INTO pbem_reminder_deliveries (
           game_id, user_id, pending_since, claimed_at
@@ -282,7 +235,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async markReminderSent(reminder: DueReminder): Promise<void> {
-      await ensureSchema();
       await sql`
         UPDATE pbem_reminder_deliveries
         SET sent_at = NOW()
@@ -294,7 +246,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async releaseReminderClaim(reminder: DueReminder): Promise<void> {
-      await ensureSchema();
       await sql`
         DELETE FROM pbem_reminder_deliveries
         WHERE game_id = ${reminder.gameId}
@@ -305,7 +256,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async listPublicGames(): Promise<PublicGameStatus[]> {
-      await ensureSchema();
       const rows = (await sql`
         SELECT guild_id, name, mode, active_mode, reminder_days, created_at, players
         FROM pbem_games
@@ -340,7 +290,6 @@ export function openRepository(databaseUrl: string) {
       previousMessageId: string,
       nextMessageId: string,
     ): Promise<boolean> {
-      await ensureSchema();
       const rows = (await sql`
         UPDATE pbem_games
         SET message_id = ${nextMessageId}, version = version + 1
@@ -351,26 +300,10 @@ export function openRepository(databaseUrl: string) {
       return rows.length > 0;
     },
 
-    async getActiveGameByName(
-      guildId: string,
-      channelId: string,
-      name: string,
-    ): Promise<GameSnapshot | null> {
-      await ensureSchema();
-      const rows = (await sql`
-        SELECT * FROM pbem_games
-        WHERE guild_id = ${guildId} AND channel_id = ${channelId}
-          AND status = 'active' AND lower(name) = lower(${name.trim()})
-        LIMIT 1
-      `) as GameRow[];
-      return rows[0] ? mapSnapshot(rows[0]) : null;
-    },
-
     async getActiveGameByNameInGuild(
       guildId: string,
       name: string,
     ): Promise<GameSnapshot | null> {
-      await ensureSchema();
       const rows = (await sql`
         SELECT * FROM pbem_games
         WHERE guild_id = ${guildId}
@@ -385,7 +318,6 @@ export function openRepository(databaseUrl: string) {
       name: string,
       reminderDays: number,
     ): Promise<GameSnapshot | null> {
-      await ensureSchema();
       const rows = (await sql`
         UPDATE pbem_games
         SET reminder_days = ${reminderDays}, version = version + 1
@@ -397,7 +329,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async deleteActiveGame(gameId: string, guildId: string): Promise<GameSnapshot | null> {
-      await ensureSchema();
       const rows = (await sql`
         DELETE FROM pbem_games
         WHERE id = ${gameId} AND guild_id = ${guildId} AND status = 'active'
@@ -407,7 +338,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async listActiveGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
-      await ensureSchema();
       const rows = (await sql`
         SELECT * FROM pbem_games
         WHERE guild_id = ${guildId} AND status = 'active'
@@ -417,7 +347,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async listGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
-      await ensureSchema();
       const rows = (await sql`
         SELECT * FROM pbem_games
         WHERE guild_id = ${guildId}
@@ -427,7 +356,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async deleteAllGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
-      await ensureSchema();
       const rows = (await sql`
         DELETE FROM pbem_games
         WHERE guild_id = ${guildId}
@@ -437,7 +365,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async claimDraft(gameId: string, creatorId: string): Promise<GameSnapshot | null> {
-      await ensureSchema();
       const rows = (await sql`
         UPDATE pbem_games SET status = 'creating', version = version + 1
         WHERE id = ${gameId} AND created_by = ${creatorId} AND status = 'setup'
@@ -447,7 +374,6 @@ export function openRepository(databaseUrl: string) {
     },
 
     async releaseDraft(gameId: string) {
-      await ensureSchema();
       await sql`
         UPDATE pbem_games SET status = 'setup', version = version + 1
         WHERE id = ${gameId} AND status = 'creating'
@@ -500,16 +426,6 @@ export function openRepository(databaseUrl: string) {
       return applyTransition(gameId, "switch_mode", null, actorId);
     },
 
-    async listActiveGames(guildId: string, channelId: string): Promise<Game[]> {
-      await ensureSchema();
-      const rows = (await sql`
-        SELECT * FROM pbem_games
-        WHERE guild_id = ${guildId} AND channel_id = ${channelId}
-          AND status = 'active'
-        ORDER BY created_at DESC
-      `) as GameRow[];
-      return rows.map((row) => mapSnapshot(row).game);
-    },
   };
   return repository;
 
@@ -519,7 +435,6 @@ export function openRepository(databaseUrl: string) {
     playerId: string | null,
     actorId: string,
   ): Promise<TransitionResult> {
-    await ensureSchema();
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const row = await getRow(gameId);
       if (!row || row.status !== "active") {
@@ -559,7 +474,6 @@ export function openRepository(databaseUrl: string) {
       if (updated[0]) {
         return {
           ...mapSnapshot(updated[0]),
-          notifyUserIds: transition.notifyUserIds,
           eventType: transition.eventType,
         };
       }

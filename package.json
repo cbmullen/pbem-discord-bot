@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "npx vercel dev",
     "build": "tsc --noEmit",
+    "migrate:db": "tsx src/database/migrate.ts",
     "register-commands": "tsx src/deploy-commands.ts",
-    "test": "tsx --test src/**/*.test.ts && node --test scripts/*.test.mjs"
+    "test": "tsx --test src/**/*.test.ts && node --test scripts/*.test.mjs",
+    "test:db": "node --env-file=.env --import tsx --test src/database/reminders.integration.test.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

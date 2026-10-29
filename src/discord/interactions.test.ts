@@ -42,8 +42,7 @@ test("game-list message splitting rejects entries longer than its limit", () => 
   assert.throws(() => splitMessage("12345678", 7), /exceeds the Discord message limit/);
 });
 
-function signedRequest(body: Buffer): Request {
-  const timestamp = "1730000000";
+function signedRequest(body: Buffer, timestamp = Math.floor(Date.now() / 1000).toString()): Request {
   const signature = sign(
     null,
     Buffer.concat([Buffer.from(timestamp), body]),
@@ -74,6 +73,22 @@ test("Discord Ed25519 signatures are verified against the exact raw body", () =>
   assert.equal(
     verifyDiscordSignature(
       Buffer.from('{"type":2}'),
+      request.headers.get("x-signature-timestamp"),
+      request.headers.get("x-signature-ed25519"),
+      publicKeyHex,
+    ),
+    false,
+  );
+});
+
+test("Discord Ed25519 signatures outside the five-minute window are rejected", () => {
+  const body = Buffer.from('{"type":1}');
+  const timestamp = (Math.floor(Date.now() / 1000) - 301).toString();
+  const request = signedRequest(body, timestamp);
+
+  assert.equal(
+    verifyDiscordSignature(
+      body,
       request.headers.get("x-signature-timestamp"),
       request.headers.get("x-signature-ed25519"),
       publicKeyHex,

@@ -133,10 +133,12 @@ contains a password, so treat it like a secret.
 11. Store it privately until you add it to Vercel as `DATABASE_URL` in step 3.
     Do not put it in a public GitHub file, chat, screenshot, or source code.
 
-You do **not** need to create a database table or run SQL yourself. The bot
-creates its `pbem_games` table and index automatically when it first connects.
-After the first successful Discord interaction, you can confirm the table from
-the project's **Tables** view in Neon.
+You do **not** need to create database tables or run SQL yourself. Database
+schema changes are applied by the versioned `npm run migrate:db` command rather
+than by Discord requests. Run it from the repository root with `DATABASE_URL`
+set in `.env` before deploying schema changes or using a new database.
+Afterward, you can confirm the tables from the project's **Tables** view in
+Neon.
 
 For Neon's current console layout and connection-string details, see
 [Connect from any application](https://neon.com/docs/connect/connect-from-any-app).
@@ -158,6 +160,9 @@ connection string you collected in steps 1 and 2.
    included. If these implementation changes have not been committed and pushed
    yet, do that first. Never include your `.env` file or any credential in a
    commit.
+   Database migrations are not run by Vercel. Before deploying a code change
+   that requires a schema update, run `npm run migrate:db` locally against the
+   same database using `DATABASE_URL` in `.env`.
 2. Open [Vercel](https://vercel.com/) and sign in.
 3. From the Vercel dashboard, select **Add New… → Project** (the wording may
    vary).
@@ -292,22 +297,29 @@ commands once using the application ID and bot token.
    If the `code` command is unavailable, use VS Code's **File → Open File**
    menu and open `.env` from the repository folder. This file is hidden
    from Git by `.gitignore`.
-5. In `.env`, replace the blank values on these lines with the values from the
-   Discord Developer Portal:
+5. In `.env`, replace the blank values for `DISCORD_BOT_TOKEN` and
+   `DISCORD_APPLICATION_ID` with the values from the Discord Developer Portal,
+   and set `DATABASE_URL` to the Neon connection string:
 
    ```text
    DISCORD_BOT_TOKEN=put_the_bot_token_here
    DISCORD_APPLICATION_ID=put_the_application_id_here
+   DATABASE_URL=the_neon_connection_string
    ```
 
-   Keep the equals sign and do not add spaces around it. Do not share the token.
-6. Save `.env`. The command-registration script only needs these two Discord
-   values; it does not need Neon credentials.
-7. In the same terminal, install the project's packages and register the
-   commands:
+   Keep the equals signs and do not add spaces around them. Do not share these
+   values.
+6. Save `.env`. Run the migration before deploying code that expects the schema,
+   including when updating an existing deployment:
 
    ```powershell
    npm install
+   npm run migrate:db
+   ```
+
+7. Register the Discord commands:
+
+   ```powershell
    npm run register-commands
    ```
 
@@ -315,10 +327,10 @@ commands once using the application ID and bot token.
    registered. If the command reports a Discord error, recheck the application
    ID/token pair in `.env`; they must belong to the same Discord application.
 
-The local `.env` is used only by the command-registration script in this step.
-The deployed Vercel app reads the separately configured values from Vercel
-**Settings → Environment Variables**. Do not add a connection string or bot
-token to source code or commit `.env`.
+The command-registration script needs only the Discord token and application
+ID; the migration command needs `DATABASE_URL`. The deployed Vercel app reads
+its values from Vercel **Settings → Environment Variables**. Do not add a
+connection string or bot token to source code or commit `.env`.
 
 The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
@@ -346,7 +358,7 @@ where the bot is installed, open the slash-command picker and check that
    verify that the board is removed and the name can be reused.
 9. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
    confirm deletion of every game in the server.
-10. In Neon, open **Tables** and confirm `pbem_games` was created.
+10. In Neon, open **Tables** and confirm the PBEM tables exist.
 
 If all these steps work, Discord, Vercel, and Neon are connected. Your computer
 can now be turned off; Vercel handles interactions when Discord sends them.
@@ -420,6 +432,11 @@ npm test
 npm run register-commands
 npm run dev
 ```
+
+The reminder delivery integration test uses Neon. Set `TEST_DATABASE_URL` to a
+dedicated test database (not the production database) and run
+`npm run test:db`. The test applies migrations and deletes its temporary game
+afterward. Without `TEST_DATABASE_URL`, the test is skipped by `npm test`.
 
 ## Automated dependency updates
 

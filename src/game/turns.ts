@@ -8,7 +8,6 @@ export interface TurnState {
 
 export interface TurnTransition {
   state: TurnState;
-  notifyUserIds: string[];
   eventType: "player_selected" | "player_marked_done" | "cycle_reset" | "mode_changed";
 }
 
@@ -54,13 +53,11 @@ export function selectPlayer(
   }
 
   if (state.activeMode === "consecutive") {
-    const changed = selected.status !== "pending";
     const players = state.players.map((player) =>
       updatePlayer(player, player.userId === userId ? "pending" : "done", now),
     );
     return {
       state: { ...state, players },
-      notifyUserIds: changed ? [userId] : [],
       eventType: "player_selected",
     };
   }
@@ -78,13 +75,8 @@ export function selectPlayer(
     eventType = "cycle_reset";
   }
 
-  const pendingUsers = players
-    .filter((player) => player.status === "pending")
-    .map((player) => player.userId);
-
   return {
     state: { ...state, players },
-    notifyUserIds: eventType === "cycle_reset" ? pendingUsers : [],
     eventType,
   };
 }
@@ -114,9 +106,6 @@ export function switchMode(state: TurnState, now: string): TurnTransition {
 
   return {
     state: { ...state, activeMode, players },
-    notifyUserIds: players
-      .filter((player) => player.status === "pending")
-      .map((player) => player.userId),
     eventType: "mode_changed",
   };
 }

@@ -10,6 +10,7 @@ import { buildGameBoard } from "../ui/game-board.js";
 const DISCORD_API = "https://discord.com/api/v10";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const EPHEMERAL = 1 << 6;
+const MAX_INTERACTION_AGE_MS = 5 * 60 * 1000;
 
 interface DiscordUser {
   id?: string;
@@ -19,6 +20,7 @@ interface DiscordUser {
 }
 
 interface InteractionPayload {
+  id?: string;
   type?: number;
   application_id?: string;
   token?: string;
@@ -63,8 +65,11 @@ export function verifyDiscordSignature(
   signature: string | null,
   publicKeyHex: string,
 ): boolean {
+  if (!timestamp || !/^\d+$/.test(timestamp)) return false;
+  const timestampSeconds = Number(timestamp);
   if (
-    !timestamp ||
+    !Number.isSafeInteger(timestampSeconds) ||
+    Math.abs(Date.now() - timestampSeconds * 1000) > MAX_INTERACTION_AGE_MS ||
     !signature ||
     !/^[0-9a-f]{64}$/i.test(publicKeyHex) ||
     !/^[0-9a-f]{128}$/i.test(signature)
@@ -1058,6 +1063,51 @@ function scheduledResponse(
   return immediateResponse(type, data);
 }
 
+async function processClaimedInteraction(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const interactionId = interaction.id;
+  if (!interactionId) throw new Error("Interaction ID is missing.");
+
+  const claimed = await openRepository(config.databaseUrl).claimInteraction(interactionId);
+  if (!claimed) {
+    if (interaction.type === 2) {
+      await editOriginal(interaction, config, {
+        content: "This interaction was already processed.",
+        components: [],
+      });
+    } else {
+      await postEphemeralFollowup(
+        interaction,
+        config,
+        "This interaction was already processed.",
+      );
+    }
+    return;
+  }
+
+  const tasks: Promise<unknown>[] = [];
+  const response = await handleInteraction(interaction, config, (task) => {
+    tasks.push(task);
+  });
+  const callback = await response.json() as {
+    type?: number;
+    data?: { content?: string };
+  };
+  if (callback.type === 4 && callback.data?.content) {
+    if (interaction.type === 2) {
+      await editOriginal(interaction, config, {
+        content: callback.data.content,
+        components: [],
+      });
+    } else {
+      await postEphemeralFollowup(interaction, config, callback.data.content);
+    }
+  }
+  await Promise.all(tasks);
+}
+
 export async function handleDiscordRequest(
   request: Request,
   schedule: (task: Promise<unknown>) => void = (task) => {
@@ -1096,6 +1146,20 @@ export async function handleDiscordRequest(
     interaction = JSON.parse(body.toString("utf8")) as InteractionPayload;
   } catch {
     return new Response("Invalid JSON", { status: 400 });
+  }
+
+  if (interaction.type === 2 || interaction.type === 3) {
+    if (!interaction.id || interaction.id.length > 64) {
+      return new Response("Invalid interaction ID", { status: 400 });
+    }
+    return scheduledResponse(
+      interaction.type === 2 ? 5 : 6,
+      interaction.type === 2 ? { flags: EPHEMERAL } : undefined,
+      processClaimedInteraction(interaction, config),
+      schedule,
+      interaction,
+      config,
+    );
   }
 
   try {
