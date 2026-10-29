@@ -268,7 +268,7 @@ export function splitMessage(content: string, maxLength = 1900): string[] {
   return chunks;
 }
 
-export function gameDeletionChoices(
+export function activeGameChoices(
   games: Array<{ name: string }>,
   query: string,
 ): Array<{ name: string; value: string }> {
@@ -615,26 +615,18 @@ async function processReminder(
   try {
     const repository = openRepository(config.databaseUrl);
     const snapshot =
-      interaction.guild_id && interaction.channel_id
-        ? await repository.getActiveGameByName(
-            interaction.guild_id,
-            interaction.channel_id,
-            gameName,
-          )
+      interaction.guild_id
+        ? await repository.getActiveGameByNameInGuild(interaction.guild_id, gameName)
         : null;
-    if (
-      !snapshot ||
-      snapshot.game.status !== "active" ||
-      !interaction.channel_id
-    ) {
+    if (!snapshot || snapshot.game.status !== "active") {
       await editOriginal(interaction, config, {
-        content: "That game is not active in this channel.",
+        content: "That game is not active in this server.",
       });
       return;
     }
     const pending = pendingUserIds(snapshot);
     if (pending.length > 0) {
-      await sendPendingReminder(interaction.channel_id, config.botToken, snapshot, pending);
+      await sendPendingReminder(snapshot.game.channelId, config.botToken, snapshot, pending);
     }
     await editOriginal(interaction, config, {
       content: pending.length
@@ -682,7 +674,7 @@ async function autocompleteActiveGame(
 ): Promise<Response> {
   const focusedOption = interaction.data?.options?.find((option) => option.focused);
   if (
-    (interaction.data?.name !== "pbem-delete" && interaction.data?.name !== "pbem-reminders") ||
+    !["pbem-delete", "pbem-reminders", "pbem-remind"].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
     !interaction.guild_id
   ) {
@@ -692,7 +684,7 @@ async function autocompleteActiveGame(
   const query = typeof focusedOption.value === "string" ? focusedOption.value : "";
   const games = await openRepository(config.databaseUrl)
     .listActiveGamesInGuild(interaction.guild_id);
-  return immediateResponse(8, { choices: gameDeletionChoices(games.map(({ game }) => game), query) });
+  return immediateResponse(8, { choices: activeGameChoices(games.map(({ game }) => game), query) });
 }
 
 async function updateGameReminderDays(
@@ -924,9 +916,9 @@ async function handleInteraction(
 
     if (commandName === "pbem-remind") {
       const gameName = optionValue(interaction, "game")?.trim();
-      if (!gameName || !interaction.guild_id || !interaction.channel_id) {
+      if (!gameName || !interaction.guild_id) {
         return immediateResponse(4, {
-          content: "Choose a game name and use `/pbem-remind` in the channel containing its board.",
+          content: "Choose an active game and use `/pbem-remind` in a server.",
           flags: EPHEMERAL,
         });
       }
@@ -992,7 +984,7 @@ async function handleInteraction(
     try {
       return await autocompleteActiveGame(interaction, config);
     } catch (error) {
-      console.error("Could not load PBEM game deletion suggestions:", error);
+      console.error("Could not load active game suggestions:", error);
       return immediateResponse(8, { choices: [] });
     }
   }

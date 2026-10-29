@@ -34,15 +34,16 @@ export const commands = [
   },
   {
     name: "pbem-remind",
-    description: "Manually remind pending players in this channel",
+    description: "Manually remind pending players for a game in this server",
     options: [
       {
         type: 3,
         name: "game",
-        description: "The game name in this channel",
+        description: "Choose an active game in this server",
         min_length: 1,
         max_length: 80,
         required: true,
+        autocomplete: true,
       },
     ],
   },

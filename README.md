@@ -446,9 +446,9 @@ local test is finished.
   Optionally set `reminder-days` (0–365) to privately DM pending players once
   they reach that many days pending. It defaults to `0`, which disables
   automated reminders.
-- `/pbem-remind game` manually mentions the pending players for the named game
-  in the current channel. Game names must be unique within a server; matching
-  ignores capitalization.
+- `/pbem-remind game` offers active games in the server as autocomplete
+  suggestions, then manually mentions pending players in that game's channel.
+  The command can be run in any channel in the server.
 - `/pbem-reminders game days` changes the automated reminder threshold for an
   active game anywhere in the server. Set `days` to 0 to disable reminders.
   Reminders are checked daily at 09:00 UTC and sent privately by DM.

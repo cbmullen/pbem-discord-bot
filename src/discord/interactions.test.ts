@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
-  gameDeletionChoices,
+  activeGameChoices,
   handleDiscordRequest,
   splitMessage,
   verifyDiscordSignature,
@@ -18,11 +18,11 @@ test("game-list messages split at line boundaries within Discord limits", () => 
   assert.ok(chunks.every((chunk) => chunk.length <= 7));
 });
 
-test("game deletion autocomplete filters active games and caps choices at 25", () => {
+test("active game autocomplete filters games and caps choices at 25", () => {
   const games = Array.from({ length: 30 }, (_, index) => ({
     name: `Game ${index + 1}`,
   }));
-  assert.deepEqual(gameDeletionChoices(games, " GAME 2 "), [
+  assert.deepEqual(activeGameChoices(games, " GAME 2 "), [
     { name: "Game 2", value: "Game 2" },
     { name: "Game 20", value: "Game 20" },
     { name: "Game 21", value: "Game 21" },
@@ -35,7 +35,7 @@ test("game deletion autocomplete filters active games and caps choices at 25", (
     { name: "Game 28", value: "Game 28" },
     { name: "Game 29", value: "Game 29" },
   ]);
-  assert.equal(gameDeletionChoices(games, "").length, 25);
+  assert.equal(activeGameChoices(games, "").length, 25);
 });
 
 test("game-list message splitting rejects entries longer than its limit", () => {
