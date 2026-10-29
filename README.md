@@ -238,7 +238,7 @@ The same deployment also exposes:
 
 - `GET /api/public-games` — public, read-only active-game and player status for
   the PBEM status page. It returns game names, player display names and statuses,
-  pending timestamps, active mode, start time, and completed-turn counts. It
+  pending timestamps, and active mode. It
   does not return Discord IDs, server/channel IDs, creator IDs, or the interaction
   token. This endpoint intentionally allows cross-origin requests for the public
   notebook page. Anyone can view the returned status data.
@@ -461,11 +461,6 @@ local test is finished.
 The player limit keeps the board within Discord's per-message component limits,
 including the mode-switch button in `both` games.
 
-Turn counts increase when a consecutive turn is handed to a different player or
-when a simultaneous player marks a turn complete. Mode switches and no-op clicks
-do not increase the count. Existing games are initialized from the bot's retained
-event history; because that history is capped, their starting counts may include
-only retained events. Counts are maintained continuously for subsequent activity.
 
 ## Dashboard
 

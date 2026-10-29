@@ -28,7 +28,6 @@ function makeSnapshot(
       createdBy: "creator-id",
       createdAt: "2026-10-29T00:00:00.000Z",
       status: "active",
-      turnsCompleted: 0,
     },
     players,
   };

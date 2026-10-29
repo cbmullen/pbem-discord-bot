@@ -1,7 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { randomUUID } from "node:crypto";
 import {
-  completesTurn,
   createInitialPlayers,
   selectPlayer,
   switchMode,
@@ -29,7 +28,6 @@ interface GameRow {
   players: Player[] | string;
   events: Array<Record<string, unknown>> | string;
   version: number;
-  turns_completed: number;
 }
 
 export interface NewGame {
@@ -45,7 +43,6 @@ export interface PublicGameStatus {
   mode: GameMode;
   activeMode: ActiveMode;
   createdAt: string;
-  turnsCompleted: number;
   players: Array<{
     username: string;
     status: Player["status"];
@@ -103,7 +100,6 @@ function mapSnapshot(row: GameRow): GameSnapshot {
     createdBy: row.created_by,
     createdAt: row.created_at,
     status: row.status === "active" ? "active" : "setup",
-    turnsCompleted: Number(row.turns_completed ?? 0),
   };
   return { game, players: parseJson<Player[]>(row.players) };
 }
@@ -129,32 +125,11 @@ export function openRepository(databaseUrl: string) {
             status text NOT NULL CHECK (status IN ('setup', 'creating', 'active')),
             players jsonb NOT NULL DEFAULT '[]'::jsonb,
             events jsonb NOT NULL DEFAULT '[]'::jsonb,
-            version integer NOT NULL DEFAULT 0,
-            turns_completed integer NOT NULL DEFAULT 0
+            version integer NOT NULL DEFAULT 0
           )
         `;
         await sql`
-          ALTER TABLE pbem_games
-          ADD COLUMN IF NOT EXISTS turns_completed integer
-        `;
-        await sql`
-          UPDATE pbem_games
-          SET turns_completed = (
-            SELECT COUNT(*)::integer
-            FROM jsonb_array_elements(events) AS event
-            WHERE event->>'type' IN (
-              'player_selected', 'player_marked_done', 'cycle_reset'
-            )
-          )
-          WHERE turns_completed IS NULL
-        `;
-        await sql`
-          ALTER TABLE pbem_games
-          ALTER COLUMN turns_completed SET DEFAULT 0
-        `;
-        await sql`
-          ALTER TABLE pbem_games
-          ALTER COLUMN turns_completed SET NOT NULL
+          ALTER TABLE pbem_games DROP COLUMN IF EXISTS turns_completed
         `;
       await sql`
         CREATE UNIQUE INDEX IF NOT EXISTS pbem_unique_game_name_per_server
@@ -223,7 +198,7 @@ export function openRepository(databaseUrl: string) {
     async listPublicGames(): Promise<PublicGameStatus[]> {
       await ensureSchema();
       const rows = (await sql`
-        SELECT name, mode, active_mode, created_at, turns_completed, players
+        SELECT name, mode, active_mode, created_at, players
         FROM pbem_games
         WHERE status = 'active'
         ORDER BY lower(name), created_at
@@ -232,7 +207,6 @@ export function openRepository(databaseUrl: string) {
         mode: GameMode;
         active_mode: ActiveMode;
         created_at: string;
-        turns_completed: number;
         players: Player[] | string;
       }>;
       return rows.map((row) => ({
@@ -240,7 +214,6 @@ export function openRepository(databaseUrl: string) {
         mode: row.mode,
         activeMode: row.active_mode,
         createdAt: row.created_at,
-        turnsCompleted: Number(row.turns_completed),
         players: parseJson<Player[]>(row.players).map((player) => ({
           username: player.username,
           status: player.status,
@@ -450,15 +423,6 @@ export function openRepository(databaseUrl: string) {
         SET active_mode = ${transition.state.activeMode},
             players = ${JSON.stringify(transition.state.players)}::jsonb,
             events = ${JSON.stringify(events)}::jsonb,
-            turns_completed = turns_completed + ${
-              completesTurn(
-                state.activeMode,
-                state.players.find((player) => player.userId === playerId),
-                transition.eventType,
-              )
-                ? 1
-                : 0
-            },
             version = version + 1
         WHERE id = ${gameId} AND status = 'active' AND version = ${row.version}
         RETURNING *

@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  completesTurn,
-  createInitialPlayers,
-  selectPlayer,
-  switchMode,
-} from "./turns.js";
+import { createInitialPlayers, selectPlayer, switchMode } from "./turns.js";
 
 const now = "2026-10-29T00:00:00.000Z";
 const selected = [
@@ -65,14 +60,4 @@ test("both games start consecutive and switching modes applies defined transitio
     consecutive.state.players.map((player) => player.status),
     ["pending", "done", "done"],
   );
-});
-
-test("turn completion excludes no-op selections and mode changes", () => {
-  const players = createInitialPlayers(selected, "consecutive", now);
-  assert.equal(completesTurn("consecutive", players[0], "player_selected"), false);
-  assert.equal(completesTurn("consecutive", players[1], "player_selected"), true);
-  assert.equal(completesTurn("simultaneous", players[0], "player_marked_done"), true);
-  assert.equal(completesTurn("simultaneous", players[0], "cycle_reset"), true);
-  assert.equal(completesTurn("simultaneous", players[0], "player_selected"), false);
-  assert.equal(completesTurn("consecutive", players[0], "mode_changed"), false);
 });
