@@ -3,12 +3,23 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
   handleDiscordRequest,
+  splitMessage,
   verifyDiscordSignature,
 } from "./interactions.js";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const publicKeyDer = publicKey.export({ format: "der", type: "spki" });
 const publicKeyHex = publicKeyDer.subarray(-32).toString("hex");
+
+test("game-list messages split at line boundaries within Discord limits", () => {
+  const chunks = splitMessage("one\ntwo\nthree", 7);
+  assert.deepEqual(chunks, ["one\ntwo", "three"]);
+  assert.ok(chunks.every((chunk) => chunk.length <= 7));
+});
+
+test("game-list message splitting rejects entries longer than its limit", () => {
+  assert.throws(() => splitMessage("12345678", 7), /exceeds the Discord message limit/);
+});
 
 function signedRequest(body: Buffer): Request {
   const timestamp = "1730000000";

@@ -215,6 +215,50 @@ function gameDeletionConfirmation(gameId: string): Record<string, unknown> {
   };
 }
 
+function deleteAllConfirmation(): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 4,
+            label: "Delete all games",
+            custom_id: "pbem:delete-all-confirm",
+          },
+          {
+            type: 2,
+            style: 2,
+            label: "Cancel",
+            custom_id: "pbem:delete-all-cancel",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export function splitMessage(content: string, maxLength = 1900): string[] {
+  if (maxLength < 1) throw new Error("Message length limit must be positive.");
+  const chunks: string[] = [];
+  let chunk = "";
+  for (const line of content.split("\n")) {
+    if (line.length > maxLength) {
+      throw new Error("A game-list entry exceeds the Discord message limit.");
+    }
+    const candidate = chunk ? `${chunk}\n${line}` : line;
+    if (candidate.length > maxLength) {
+      chunks.push(chunk);
+      chunk = line;
+    } else {
+      chunk = candidate;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks;
+}
+
 async function postChannelMessage(
   channelId: string,
   token: string,
@@ -257,6 +301,31 @@ async function editOriginal(
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+async function postEphemeralFollowup(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  content: string,
+): Promise<void> {
+  if (!interaction.token) throw new Error("Interaction token is missing.");
+  const response = await fetch(
+    `${DISCORD_API}/webhooks/${config.applicationId}/${interaction.token}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content,
+        flags: EPHEMERAL,
+        allowed_mentions: { parse: [] },
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Could not send game-list follow-up (${response.status}): ${await response.text()}`,
+    );
+  }
 }
 
 async function createGameDraft(
@@ -579,6 +648,121 @@ async function processGameDeletion(
   });
 }
 
+async function processGameList(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-list` in a server.",
+    });
+    return;
+  }
+
+  const games = await openRepository(config.databaseUrl)
+    .listGamesInGuild(interaction.guild_id);
+  if (games.length === 0) {
+    await editOriginal(interaction, config, {
+      content: "There are no PBEM games in this server.",
+    });
+    return;
+  }
+
+  const entries = games.map(({ game, players }) => {
+    const safeName = game.name.replaceAll("@", "@\u200b");
+    const state = game.status === "active"
+      ? `${game.activeMode}; ${players.length} player${players.length === 1 ? "" : "s"}, ${players.filter((player) => player.status === "pending").length} pending`
+      : "setup pending player selection";
+    return `• **${safeName}** — ${state}; <#${game.channelId}>`;
+  });
+  const chunks = splitMessage(
+    `**PBEM games in this server (${games.length}):**\n${entries.join("\n")}`,
+  );
+  await editOriginal(interaction, config, {
+    content: chunks[0],
+    allowed_mentions: { parse: [] },
+  });
+  for (const chunk of chunks.slice(1)) {
+    await postEphemeralFollowup(interaction, config, chunk);
+  }
+}
+
+async function prepareDeleteAllGames(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-delete-all` in a server.",
+    });
+    return;
+  }
+
+  const games = await openRepository(config.databaseUrl)
+    .listGamesInGuild(interaction.guild_id);
+  if (games.length === 0) {
+    await editOriginal(interaction, config, {
+      content: "There are no PBEM games to delete in this server.",
+      components: [],
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: `This will permanently delete all ${games.length} PBEM game${games.length === 1 ? "" : "s"} in this server, including pending setups, and remove their boards. This cannot be undone. Confirm to continue.`,
+    ...deleteAllConfirmation(),
+  });
+}
+
+async function processDeleteAllGames(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  if (!interaction.guild_id || !interactionUserId(interaction)) {
+    throw new Error("Bulk game deletion is missing server or user context.");
+  }
+
+  const games = await openRepository(config.databaseUrl)
+    .deleteAllGamesInGuild(interaction.guild_id);
+  if (games.length === 0) {
+    await editOriginal(interaction, config, {
+      content: "There are no games left to delete in this server.",
+      components: [],
+    });
+    return;
+  }
+
+  const boards = games.flatMap(({ game }) =>
+    game.messageId
+      ? [{ name: game.name, channelId: game.channelId, messageId: game.messageId }]
+      : [],
+  );
+  let failedBoards = 0;
+  for (let index = 0; index < boards.length; index += 5) {
+    const results = await Promise.all(
+      boards.slice(index, index + 5).map(async (board) => {
+        try {
+          await deleteChannelMessage(board.channelId, board.messageId, config.botToken);
+          return true;
+        } catch (error) {
+          console.error(`Could not remove the board for deleted PBEM game "${board.name}":`, error);
+          return false;
+        }
+      }),
+    );
+    failedBoards += results.filter((success) => !success).length;
+  }
+  const message =
+    failedBoards === 0
+      ? `Deleted ${games.length} PBEM game${games.length === 1 ? "" : "s"} and freed their names.`
+      : `Deleted ${games.length} PBEM game${games.length === 1 ? "" : "s"} and freed their names, but could not remove ${failedBoards} board message${failedBoards === 1 ? "" : "s"}. Check the bot's channel permissions.`;
+  await editOriginal(interaction, config, {
+    content: message,
+    components: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 function immediateResponse(type: number, data?: Record<string, unknown>): Response {
   return jsonResponse(data ? { type, data } : { type });
 }
@@ -633,6 +817,28 @@ async function handleInteraction(
       const task = prepareGameDeletion(interaction, config, gameName);
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
+
+    if (commandName === "pbem-list") {
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-list` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processGameList(interaction, config);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
+    if (commandName === "pbem-delete-all") {
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-delete-all` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareDeleteAllGames(interaction, config);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
   }
 
   if (interaction.type === 4) {
@@ -662,6 +868,16 @@ async function handleInteraction(
     }
     if (action === "delete-confirm" && gameId) {
       const task = processGameDeletion(interaction, config, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
+    if (action === "delete-all-cancel") {
+      return immediateResponse(7, {
+        content: "Bulk deletion cancelled.",
+        components: [],
+      });
+    }
+    if (action === "delete-all-confirm") {
+      const task = processDeleteAllGames(interaction, config);
       return scheduledResponse(6, undefined, task, schedule, interaction, config);
     }
     if (!gameId || (action !== "player" && action !== "mode")) {

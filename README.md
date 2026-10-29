@@ -285,7 +285,7 @@ commands once using the application ID and bot token.
    npm run register-commands
    ```
 
-8. Look for the success message that says three global application commands were
+8. Look for the success message that says five global application commands were
    registered. If the command reports a Discord error, recheck the application
    ID/token pair in `.env`; they must belong to the same Discord application.
 
@@ -298,7 +298,8 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-remind`, and `/pbem-delete` are listed.
+`/pbem`, `/pbem-remind`, `/pbem-delete`, `/pbem-list`, and
+`/pbem-delete-all` are listed.
 
 ## 6. Verify the bot
 
@@ -317,7 +318,9 @@ where the bot is installed, open the slash-command picker and check that
    manual reminder.
 8. Optionally run `/pbem-delete` with the game name, confirm deletion, and
    verify that the board is removed and the name can be reused.
-9. In Neon, open **Tables** and confirm `pbem_games` was created.
+9. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
+   confirm deletion of every game in the server.
+10. In Neon, open **Tables** and confirm `pbem_games` was created.
 
 If all these steps work, Discord, Vercel, and Neon are connected. Your computer
 can now be turned off; Vercel handles interactions when Discord sends them.
@@ -418,6 +421,11 @@ local test is finished.
 - `/pbem-delete game` asks for confirmation, then removes that active game and
   its board. Any server member can confirm deletion. The command can be run in
   any channel in that server.
+- `/pbem-list` privately lists games in the server, including active-game
+  mode/player/pending counts and any pending setups.
+- `/pbem-delete-all` shows a confirmation before permanently deleting every
+  game record in the current server, including pending setups. Any server
+  member can confirm; the bot also attempts to remove each existing board.
 - A game name is reserved while its setup or active game record exists. Failed
   setup attempts are removed, and deleting an active game frees the name.
 - Anyone can click any player's status button.

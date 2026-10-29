@@ -52,4 +52,12 @@ export const commands = [
       },
     ],
   },
+  {
+    name: "pbem-list",
+    description: "List PBEM games in this server",
+  },
+  {
+    name: "pbem-delete-all",
+    description: "Delete all PBEM games in this server",
+  },
 ];

@@ -209,6 +209,36 @@ export function openRepository(databaseUrl: string) {
       return rows[0] ? mapSnapshot(rows[0]) : null;
     },
 
+    async listActiveGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
+      await ensureSchema();
+      const rows = (await sql`
+        SELECT * FROM pbem_games
+        WHERE guild_id = ${guildId} AND status = 'active'
+        ORDER BY lower(name), created_at
+      `) as GameRow[];
+      return rows.map(mapSnapshot);
+    },
+
+    async listGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
+      await ensureSchema();
+      const rows = (await sql`
+        SELECT * FROM pbem_games
+        WHERE guild_id = ${guildId}
+        ORDER BY lower(name), created_at
+      `) as GameRow[];
+      return rows.map(mapSnapshot);
+    },
+
+    async deleteAllGamesInGuild(guildId: string): Promise<GameSnapshot[]> {
+      await ensureSchema();
+      const rows = (await sql`
+        DELETE FROM pbem_games
+        WHERE guild_id = ${guildId}
+        RETURNING *
+      `) as GameRow[];
+      return rows.map(mapSnapshot);
+    },
+
     async claimDraft(gameId: string, creatorId: string): Promise<GameSnapshot | null> {
       await ensureSchema();
       const rows = (await sql`
