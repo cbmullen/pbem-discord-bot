@@ -22,6 +22,14 @@ export const commands = [
           { name: "Both (switchable)", value: "both" },
         ],
       },
+      {
+        type: 4,
+        name: "reminder-days",
+        description: "Days a player can be pending before one private reminder (0 disables reminders)",
+        min_value: 0,
+        max_value: 365,
+        required: false,
+      },
     ],
   },
   {

@@ -6,6 +6,15 @@
   "functions": {
     "api/interactions.ts": {
       "maxDuration": 30
+    },
+    "api/reminders.ts": {
+      "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/reminders",
+      "schedule": "0 9 * * *"
+    }
+  ]
 }

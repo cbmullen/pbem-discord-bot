@@ -198,6 +198,12 @@ deployed app. In the Vercel project:
    | `DISCORD_APPLICATION_ID` | Application ID copied from Discord |
    | `DISCORD_PUBLIC_KEY` | Public Key copied from Discord |
    | `DATABASE_URL` | The entire Neon connection string beginning with `postgresql://` |
+   | `CRON_SECRET` | A long random secret used to authorize the scheduled reminder endpoint |
+
+Generate `CRON_SECRET` as a random value of at least 32 bytes, for example by
+running `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`
+in a terminal. Save it only in Vercel's environment settings and your private
+local `.env`; do not commit it.
 
 3. Select **Production** for each variable. You may also select **Preview** or
    **Development** if you intentionally want those deployments to use the same
@@ -352,7 +358,9 @@ can now be turned off; Vercel handles interactions when Discord sends them.
   with `/api/interactions`.
 - Check that `DISCORD_PUBLIC_KEY` in Vercel exactly matches the application's
   **Public Key**, not its token or application ID.
-- Confirm that all four Vercel environment variables were saved for **Production**.
+- Confirm that the four Discord/database variables were saved for **Production**.
+- If scheduled reminders are enabled, also confirm `CRON_SECRET` is set for
+  **Production**.
 - After editing environment variables, redeploy so they take effect.
 - In Vercel, open the latest deployment's function logs for errors.
 
@@ -397,10 +405,10 @@ commit and that the project's **Build Command**, **Output Directory**, and
 
 Local development is optional; it is not required for the deployed bot to
 remain online. If you want to test the function on your own computer, open a
-terminal in the repository root, copy `.env.example` to `.env`, and set all four
-values from the Discord and Neon setup steps above. In particular, local
-development also needs the Discord Public Key and Neon `DATABASE_URL`; command
-registration alone does not.
+terminal in the repository root, copy `.env.example` to `.env`, and set the
+values from the Discord, Neon, and Vercel setup steps above. In particular,
+local development also needs the Discord Public Key, Neon `DATABASE_URL`, and
+`CRON_SECRET`; command registration alone does not.
 
 Then run:
 
@@ -434,6 +442,9 @@ local test is finished.
 
 - `/pbem name mode` creates a game in the current channel and presents a private
   Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game.
+  Optionally set `reminder-days` (0–365) to privately DM pending players once
+  they reach that many days pending. It defaults to `0`, which disables
+  automated reminders.
 - `/pbem-remind game` manually mentions the pending players for the named game
   in the current channel. Game names must be unique within a server; matching
   ignores capitalization.
@@ -445,6 +456,9 @@ local test is finished.
 - `/pbem-delete-all` shows a confirmation before permanently deleting every
   game record in the current server, including pending setups. Any server
   member can confirm; the bot also attempts to remove each existing board.
+- Automated reminders are checked daily at 09:00 UTC. Each player receives at
+  most one DM per pending turn after the game's configured day threshold. DM
+  delivery depends on the player's Discord privacy settings.
 - A game name is reserved while its setup or active game record exists. Failed
   setup attempts are removed, and deleting an active game frees the name.
 - Anyone can click any player's status button.

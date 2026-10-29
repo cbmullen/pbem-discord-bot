@@ -8,6 +8,7 @@ export interface Game {
   name: string;
   mode: GameMode;
   activeMode: ActiveMode;
+  reminderDays: number;
   guildId: string;
   channelId: string;
   messageId: string | null;

@@ -32,7 +32,7 @@ interface InteractionPayload {
     component_type?: number;
     values?: string[];
     resolved?: { users?: Record<string, DiscordUser> };
-    options?: Array<{ name?: string; value?: string }>;
+    options?: Array<{ name?: string; value?: string | number }>;
   };
   message?: { id?: string };
 }
@@ -162,7 +162,16 @@ function optionValue(
   interaction: InteractionPayload,
   optionName: string,
 ): string | undefined {
-  return interaction.data?.options?.find((option) => option.name === optionName)?.value;
+  const value = interaction.data?.options?.find((option) => option.name === optionName)?.value;
+  return typeof value === "string" ? value : undefined;
+}
+
+function optionIntegerValue(
+  interaction: InteractionPayload,
+  optionName: string,
+): number | undefined {
+  const value = interaction.data?.options?.find((option) => option.name === optionName)?.value;
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 
 function interactionUserId(interaction: InteractionPayload): string | undefined {
@@ -333,6 +342,7 @@ async function createGameDraft(
   config: RuntimeConfig,
   gameName: string,
   mode: GameMode,
+  reminderDays: number,
 ): Promise<void> {
   let gameId: string | undefined;
   try {
@@ -346,13 +356,14 @@ async function createGameDraft(
     gameId = await repository.createDraft({
       name: gameName,
       mode,
+      reminderDays,
       guildId: interaction.guild_id,
       channelId: interaction.channel_id,
       createdBy: creatorId,
     });
     const maxPlayers = mode === "both" ? 24 : 25;
     await editOriginal(interaction, config, {
-      content: `Choose 1-${maxPlayers} players for **${gameName}**. The first selected player starts in consecutive mode.`,
+      content: `Choose 1-${maxPlayers} players for **${gameName}**. The first selected player starts in consecutive mode. Automated reminders: ${reminderDays === 0 ? "off" : `after ${reminderDays} days pending`}.`,
       components: [interactionUserSelect(gameId, maxPlayers)],
     });
   } catch (error) {
@@ -718,8 +729,11 @@ async function processGameList(
 
   const entries = games.map(({ game, players }) => {
     const safeName = game.name.replaceAll("@", "@\u200b");
+    const reminderSetting = game.reminderDays === 0
+      ? "reminders off"
+      : `reminder after ${game.reminderDays} day${game.reminderDays === 1 ? "" : "s"}`;
     const state = game.status === "active"
-      ? `${game.activeMode}; ${players.length} player${players.length === 1 ? "" : "s"}, ${players.filter((player) => player.status === "pending").length} pending`
+      ? `${game.activeMode}; ${players.length} player${players.length === 1 ? "" : "s"}, ${players.filter((player) => player.status === "pending").length} pending; ${reminderSetting}`
       : "setup pending player selection";
     return `• **${safeName}** — ${state}; <#${game.channelId}>`;
   });
@@ -826,9 +840,16 @@ async function handleInteraction(
     if (commandName === "pbem") {
       const name = optionValue(interaction, "name")?.trim();
       const mode = optionValue(interaction, "mode");
-      if (!name || name.length > 80 || !modeIsValid(mode)) {
+      const reminderDays = optionIntegerValue(interaction, "reminder-days") ?? 0;
+      if (
+        !name ||
+        name.length > 80 ||
+        !modeIsValid(mode) ||
+        reminderDays < 0 ||
+        reminderDays > 365
+      ) {
         return immediateResponse(4, {
-          content: "Provide a game name of 1-80 characters and select a valid mode.",
+          content: "Provide a game name of 1-80 characters, select a valid mode, and choose reminder days from 0-365.",
           flags: EPHEMERAL,
         });
       }
@@ -838,7 +859,7 @@ async function handleInteraction(
           flags: EPHEMERAL,
         });
       }
-      const task = createGameDraft(interaction, config, name, mode);
+      const task = createGameDraft(interaction, config, name, mode, reminderDays);
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 

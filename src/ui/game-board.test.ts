@@ -22,6 +22,7 @@ function makeSnapshot(
       name: "Test",
       mode,
       activeMode,
+      reminderDays: 0,
       guildId: "guild-id",
       channelId: "channel-id",
       messageId: null,

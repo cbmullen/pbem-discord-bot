@@ -5,6 +5,7 @@ import {
   selectPlayer,
   switchMode,
 } from "../game/turns.js";
+import { getDueReminderPlayers } from "../game/reminders.js";
 import type {
   ActiveMode,
   Game,
@@ -19,6 +20,7 @@ interface GameRow {
   name: string;
   mode: GameMode;
   active_mode: ActiveMode;
+  reminder_days: number;
   guild_id: string;
   channel_id: string;
   message_id: string | null;
@@ -33,9 +35,22 @@ interface GameRow {
 export interface NewGame {
   name: string;
   mode: GameMode;
+  reminderDays: number;
   guildId: string;
   channelId: string;
   createdBy: string;
+}
+
+export interface DueReminder {
+  gameId: string;
+  gameName: string;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  userId: string;
+  username: string;
+  pendingSince: string;
+  reminderDays: number;
 }
 
 export interface PublicGameStatus {
@@ -95,6 +110,7 @@ function mapSnapshot(row: GameRow): GameSnapshot {
     name: row.name,
     mode: row.mode,
     activeMode: row.active_mode,
+    reminderDays: row.reminder_days,
     guildId: row.guild_id,
     channelId: row.channel_id,
     messageId: row.message_id,
@@ -118,6 +134,7 @@ export function openRepository(databaseUrl: string) {
             name text NOT NULL,
             mode text NOT NULL CHECK (mode IN ('consecutive', 'simultaneous', 'both')),
             active_mode text NOT NULL CHECK (active_mode IN ('consecutive', 'simultaneous')),
+            reminder_days integer NOT NULL DEFAULT 0 CHECK (reminder_days BETWEEN 0 AND 365),
             guild_id text NOT NULL,
             channel_id text NOT NULL,
             message_id text,
@@ -130,7 +147,22 @@ export function openRepository(databaseUrl: string) {
           )
         `;
         await sql`
+          ALTER TABLE pbem_games
+          ADD COLUMN IF NOT EXISTS reminder_days integer NOT NULL DEFAULT 0
+          CHECK (reminder_days BETWEEN 0 AND 365)
+        `;
+        await sql`
           ALTER TABLE pbem_games DROP COLUMN IF EXISTS turns_completed
+        `;
+        await sql`
+          CREATE TABLE IF NOT EXISTS pbem_reminder_deliveries (
+            game_id uuid NOT NULL REFERENCES pbem_games(id) ON DELETE CASCADE,
+            user_id text NOT NULL,
+            pending_since timestamptz NOT NULL,
+            claimed_at timestamptz NOT NULL,
+            sent_at timestamptz,
+            PRIMARY KEY (game_id, user_id, pending_since)
+          )
         `;
       await sql`
         CREATE UNIQUE INDEX IF NOT EXISTS pbem_unique_game_name_per_server
@@ -168,11 +200,11 @@ export function openRepository(databaseUrl: string) {
       try {
         await sql`
           INSERT INTO pbem_games (
-            id, name, mode, active_mode, guild_id, channel_id, created_by,
-            created_at, status, events
+            id, name, mode, active_mode, reminder_days, guild_id, channel_id,
+            created_by, created_at, status, events
           ) VALUES (
-            ${id}, ${input.name}, ${input.mode}, ${activeMode}, ${input.guildId},
-            ${input.channelId}, ${input.createdBy}, ${now}, 'setup',
+            ${id}, ${input.name}, ${input.mode}, ${activeMode}, ${input.reminderDays},
+            ${input.guildId}, ${input.channelId}, ${input.createdBy}, ${now}, 'setup',
             ${JSON.stringify([{ type: "game_created", actorId: input.createdBy, createdAt: now }])}::jsonb
           )
         `;
@@ -194,6 +226,81 @@ export function openRepository(databaseUrl: string) {
     async getSnapshot(gameId: string): Promise<GameSnapshot | null> {
       const row = await getRow(gameId);
       return row ? mapSnapshot(row) : null;
+    },
+
+    async listDueReminders(now = new Date()): Promise<DueReminder[]> {
+      await ensureSchema();
+      const rows = (await sql`
+        SELECT * FROM pbem_games
+        WHERE status = 'active' AND reminder_days > 0
+      `) as GameRow[];
+      return rows.flatMap((row) => {
+        const snapshot = mapSnapshot(row);
+        return getDueReminderPlayers(
+          snapshot.players,
+          snapshot.game.reminderDays,
+          now,
+        ).map((player) => ({
+          gameId: snapshot.game.id,
+          gameName: snapshot.game.name,
+          guildId: snapshot.game.guildId,
+          channelId: snapshot.game.channelId,
+          messageId: snapshot.game.messageId,
+          userId: player.userId,
+          username: player.username,
+          pendingSince: player.pendingSince!,
+          reminderDays: snapshot.game.reminderDays,
+        }));
+      });
+    },
+
+    async claimReminderDelivery(reminder: DueReminder): Promise<boolean> {
+      await ensureSchema();
+      const rows = (await sql`
+        INSERT INTO pbem_reminder_deliveries (
+          game_id, user_id, pending_since, claimed_at
+        )
+        SELECT game.id, ${reminder.userId}, ${reminder.pendingSince},
+               NOW()
+        FROM pbem_games AS game
+        WHERE game.id = ${reminder.gameId}
+          AND game.status = 'active'
+          AND game.reminder_days > 0
+          AND game.players @> ${JSON.stringify([{
+            userId: reminder.userId,
+            status: "pending",
+            pendingSince: reminder.pendingSince,
+          }])}::jsonb
+        ON CONFLICT (game_id, user_id, pending_since)
+        DO UPDATE SET claimed_at = NOW()
+        WHERE pbem_reminder_deliveries.sent_at IS NULL
+          AND pbem_reminder_deliveries.claimed_at < NOW() - INTERVAL '1 hour'
+        RETURNING game_id
+      `) as Array<{ game_id: string }>;
+      return rows.length > 0;
+    },
+
+    async markReminderSent(reminder: DueReminder): Promise<void> {
+      await ensureSchema();
+      await sql`
+        UPDATE pbem_reminder_deliveries
+        SET sent_at = NOW()
+        WHERE game_id = ${reminder.gameId}
+          AND user_id = ${reminder.userId}
+          AND pending_since = ${reminder.pendingSince}
+          AND sent_at IS NULL
+      `;
+    },
+
+    async releaseReminderClaim(reminder: DueReminder): Promise<void> {
+      await ensureSchema();
+      await sql`
+        DELETE FROM pbem_reminder_deliveries
+        WHERE game_id = ${reminder.gameId}
+          AND user_id = ${reminder.userId}
+          AND pending_since = ${reminder.pendingSince}
+          AND sent_at IS NULL
+      `;
     },
 
     async listPublicGames(): Promise<PublicGameStatus[]> {
