@@ -14,6 +14,7 @@ export interface Game {
   createdBy: string;
   createdAt: string;
   status: GameStatus;
+  turnsCompleted: number;
 }
 
 export interface Player {
@@ -34,4 +35,3 @@ export interface GameSnapshot {
   game: Game;
   players: Player[];
 }
-

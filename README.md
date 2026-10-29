@@ -234,6 +234,25 @@ picker selections.
 The endpoint URL is public; the bot token and database URL are not. Never use a
 secret value as part of the endpoint URL.
 
+The same deployment also exposes:
+
+- `GET /api/public-games` — public, read-only active-game and player status for
+  the PBEM status page. It returns game names, player display names and statuses,
+  pending timestamps, active mode, start time, and completed-turn counts. It
+  does not return Discord IDs, server/channel IDs, creator IDs, or the interaction
+  token. This endpoint intentionally allows cross-origin requests for the public
+  notebook page. Anyone can view the returned status data.
+- `GET /api/health` — checks that the function can connect to Neon and returns
+  only `healthy` or `unhealthy`. It also supports CORS for the status badge.
+
+The game status page is public, so treat the displayed game and player names and
+turn statuses as public information. The API is read-only and requires no
+additional Vercel secrets or paid services.
+
+The public notebook's `pbem-status/config.js` must point to the Production
+Vercel origin (not a deployment-specific preview URL) so the page can call these
+two endpoints.
+
 ## 5. Register the slash commands
 
 The interaction endpoint and command definitions are separate: deploying the
@@ -441,6 +460,12 @@ local test is finished.
 
 The player limit keeps the board within Discord's per-message component limits,
 including the mode-switch button in `both` games.
+
+Turn counts increase when a consecutive turn is handed to a different player or
+when a simultaneous player marks a turn complete. Mode switches and no-op clicks
+do not increase the count. Existing games are initialized from the bot's retained
+event history; because that history is capped, their starting counts may include
+only retained events. Counts are maintained continuously for subsequent activity.
 
 ## Dashboard
 

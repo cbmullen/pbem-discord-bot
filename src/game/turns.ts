@@ -12,6 +12,17 @@ export interface TurnTransition {
   eventType: "player_selected" | "player_marked_done" | "cycle_reset" | "mode_changed";
 }
 
+export function completesTurn(
+  activeMode: ActiveMode,
+  selectedPlayer: Player | undefined,
+  eventType: TurnTransition["eventType"],
+): boolean {
+  if (activeMode === "consecutive") {
+    return eventType === "player_selected" && selectedPlayer?.status === "done";
+  }
+  return eventType === "player_marked_done" || eventType === "cycle_reset";
+}
+
 function updatePlayer(
   player: Player,
   status: PlayerStatus,
@@ -120,4 +131,3 @@ export function switchMode(state: TurnState, now: string): TurnTransition {
     eventType: "mode_changed",
   };
 }
-
