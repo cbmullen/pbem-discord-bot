@@ -1,0 +1,95 @@
+name: Daily dependency updates
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: daily-dependency-updates
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install current dependencies
+        run: npm ci
+
+      - name: Find dependency updates
+        id: updates
+        run: node scripts/update-dependencies.mjs
+
+      - name: Notify about major updates
+        if: steps.updates.outputs.has_major_updates == 'true'
+        env:
+          WEBHOOK_URL: ${{ secrets.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK }}
+          MESSAGE: ${{ steps.updates.outputs.major_message }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK must be configured when major updates are available."
+            exit 1
+          fi
+          payload="$(node -e 'process.stdout.write(JSON.stringify({content: process.env.MESSAGE}))')"
+          curl --fail-with-body --silent --show-error \
+            -H "Content-Type: application/json" \
+            --data "$payload" \
+            "$WEBHOOK_URL"
+
+      - name: Update lockfile
+        if: steps.updates.outputs.has_updates == 'true'
+        id: lockfile
+        continue-on-error: true
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install updated dependencies
+        if: steps.updates.outputs.has_updates == 'true' && steps.lockfile.outcome == 'success'
+        id: install
+        continue-on-error: true
+        run: npm ci
+
+      - name: Validate updated dependencies
+        if: steps.updates.outputs.has_updates == 'true' && steps.install.outcome == 'success'
+        id: validate
+        continue-on-error: true
+        run: |
+          npm run build
+          npm test
+
+      - name: Open dependency update pull request
+        if: >-
+          always() &&
+          steps.updates.outputs.has_updates == 'true' &&
+          (
+            steps.updates.outputs.has_major_updates == 'true' ||
+            (
+              steps.lockfile.outcome == 'success' &&
+              steps.install.outcome == 'success' &&
+              steps.validate.outcome == 'success'
+            )
+          )
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/daily-dependency-updates
+          delete-branch: true
+          commit-message: "chore: update dependencies"
+          title: ${{ steps.updates.outputs.has_major_updates == 'true' && 'chore: dependency updates (includes major bumps)' || 'chore: daily dependency updates' }}
+          body: |
+            Automated dependency updates.
+
+            Major-version updates are included for review and were also reported through the configured webhook.
+            Lockfile update: ${{ steps.lockfile.outcome || 'not required' }}
+            Dependency installation: ${{ steps.install.outcome || 'not required' }}
+            Build and tests: ${{ steps.validate.outcome || 'not run' }}

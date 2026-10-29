@@ -390,6 +390,18 @@ npm run register-commands
 npm run dev
 ```
 
+## Automated dependency updates
+
+The GitHub Actions workflow checks direct dependencies daily. Patch and minor
+updates are proposed in a pull request after the build and tests pass. Major
+updates are also included in a pull request for review, and their package names
+and versions are sent to the Discord-compatible webhook stored in the
+`PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK` repository secret. Major-update PRs
+are still opened if the lockfile update, installation, build, or tests fail;
+the PR body reports each validation result. Add the webhook secret in GitHub
+under **Settings → Secrets and variables → Actions**. The workflow can also be
+started manually from the repository's **Actions** tab.
+
 `npm run dev` uses the Vercel CLI to serve the function locally. Discord cannot
 send requests to a local-only address; to test live interactions locally, use a
 public HTTPS tunnel and temporarily set the Discord Interactions Endpoint URL

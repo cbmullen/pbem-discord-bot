@@ -10,7 +10,7 @@
     "dev": "npx vercel dev",
     "build": "tsc --noEmit",
     "register-commands": "tsx src/deploy-commands.ts",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts && node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
