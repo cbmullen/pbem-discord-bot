@@ -32,6 +32,10 @@ function makeSnapshot(mode: "consecutive" | "both", playerCount: number): GameSn
 test("board components fit Discord's five action rows at maximum roster sizes", () => {
   const consecutive = buildGameBoard(makeSnapshot("consecutive", 25));
   const both = buildGameBoard(makeSnapshot("both", 24));
+  assert.match(consecutive.content, /^\*\*Test\*\*\nPending:/);
+  assert.doesNotMatch(consecutive.content, /PBEM:|consecutive/);
+  assert.equal(consecutive.components.at(0)?.components.at(0)?.style, 1);
+  assert.equal(consecutive.components.at(0)?.components.at(1)?.style, 3);
   assert.equal(consecutive.components?.length, 5);
   assert.equal(both.components?.length, 5);
   assert.equal(

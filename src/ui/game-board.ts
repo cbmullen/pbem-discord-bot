@@ -2,7 +2,7 @@ import type { GameSnapshot } from "../game/types.js";
 
 interface ButtonComponent {
   type: 2;
-  style: 1 | 2;
+  style: 1 | 2 | 3;
   label: string;
   custom_id: string;
 }
@@ -24,10 +24,6 @@ export function buildGameBoard(
 ): DiscordMessagePayload {
   const { game, players } = snapshot;
   const pending = players.filter((player) => player.status === "pending");
-  const titleMode =
-    game.mode === "both"
-      ? `both: ${game.activeMode}`
-      : game.activeMode;
   const components: ActionRow[] = [];
 
   for (let index = 0; index < players.length; index += 5) {
@@ -35,7 +31,7 @@ export function buildGameBoard(
       type: 1,
       components: players.slice(index, index + 5).map((player) => ({
         type: 2,
-        style: player.status === "pending" ? 1 : 2,
+        style: player.status === "pending" ? 1 : 3,
         label: `${player.username} - ${player.status}`.slice(0, 80),
         custom_id: `pbem:player:${game.id}:${player.userId}`,
       })),
@@ -58,7 +54,7 @@ export function buildGameBoard(
   }
 
   return {
-    content: `**PBEM: ${game.name} [${titleMode}]**\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
+    content: `**${game.name}**\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
     components,
     allowed_mentions: {
       users: announcePending ? pending.map((player) => player.userId) : [],

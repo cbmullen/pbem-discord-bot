@@ -484,7 +484,7 @@ function pendingUserIds(snapshot: GameSnapshot): string[] {
     .map((player) => player.userId);
 }
 
-async function notifyPending(
+async function sendPendingReminder(
   channelId: string,
   token: string,
   snapshot: GameSnapshot,
@@ -493,7 +493,7 @@ async function notifyPending(
   if (userIds.length === 0) return;
   const mentions = userIds.map((userId) => `<@${userId}>`).join(", ");
   await postChannelMessage(channelId, token, {
-    content: `It is now time for ${mentions} to take their turn in **${snapshot.game.name}**.`,
+    content: `Reminder for **${snapshot.game.name}**: ${mentions} have pending turns.`,
     allowed_mentions: { users: userIds },
   });
 }
@@ -534,7 +534,6 @@ async function processBoardInteraction(
     config.botToken,
     { method: "PATCH", body: JSON.stringify(buildGameBoard(result)) },
   );
-  await notifyPending(channelId, config.botToken, result, result.notifyUserIds);
 }
 
 async function processReminder(
@@ -564,7 +563,7 @@ async function processReminder(
     }
     const pending = pendingUserIds(snapshot);
     if (pending.length > 0) {
-      await notifyPending(interaction.channel_id, config.botToken, snapshot, pending);
+      await sendPendingReminder(interaction.channel_id, config.botToken, snapshot, pending);
     }
     await editOriginal(interaction, config, {
       content: pending.length
