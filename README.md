@@ -174,7 +174,7 @@ connection string you collected in steps 1 and 2.
    - **Build Command:** this is disabled by `vercel.json`. Do not override it
      in Project Settings. The `build` script in `package.json` is for local
      type-checking and does not create deployment output.
-   - **Output Directory:** leave it blank/default.
+   - **Output Directory:** set to `public` (also configured in `vercel.json`).
    - **Development Command:** leave it blank/default
 9. Keep the project on the **Hobby** plan. Do not add a card, upgrade the plan,
    enable paid features, or turn on paid usage for this project.
@@ -335,14 +335,14 @@ can now be turned off; Vercel handles interactions when Discord sends them.
 ### Vercel reports that the `public` output directory is missing
 
 This app deploys as a Vercel Function in `api/`; it does not generate a static
-site or a `public` build directory. The `build` script in `package.json` only
-type-checks and does not create deployment output. `vercel.json` forces the
-**Other** framework preset and disables that build script so Vercel can package
-the function in `api/`. Commit and push that configuration, then redeploy. If
-the error remains after deploying the new commit, check Vercel's deployment
-details to confirm it used the latest commit and that the project's
-**Build Command**, **Output Directory**, and **Framework Preset** are not
-overriding the repository configuration.
+site. The `build` script in `package.json` only type-checks and does not create
+deployment output. The current Vercel build is invoking its static builder and
+requires an output folder, so `vercel.json` explicitly sets `public` as that
+folder; it contains only a `robots.txt` placeholder. The Discord interaction
+handler remains the Vercel Function in `api/`. Commit and push these changes,
+then redeploy. If the error remains, confirm the deployment used the latest
+commit and that the project's **Build Command**, **Output Directory**, and
+**Framework Preset** are not overriding the repository configuration.
 
 ### Commands do not appear in Discord
 
