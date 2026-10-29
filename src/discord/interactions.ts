@@ -32,7 +32,7 @@ interface InteractionPayload {
     component_type?: number;
     values?: string[];
     resolved?: { users?: Record<string, DiscordUser> };
-    options?: Array<{ name?: string; value?: string | number }>;
+    options?: Array<{ name?: string; value?: string | number; focused?: boolean }>;
   };
   message?: { id?: string };
 }
@@ -266,6 +266,17 @@ export function splitMessage(content: string, maxLength = 1900): string[] {
   }
   if (chunk) chunks.push(chunk);
   return chunks;
+}
+
+export function gameDeletionChoices(
+  games: Array<{ name: string }>,
+  query: string,
+): Array<{ name: string; value: string }> {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return games
+    .filter((game) => game.name.toLocaleLowerCase().includes(normalizedQuery))
+    .slice(0, 25)
+    .map((game) => ({ name: game.name, value: game.name }));
 }
 
 async function postChannelMessage(
@@ -665,6 +676,54 @@ async function prepareGameDeletion(
   });
 }
 
+async function autocompleteActiveGame(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<Response> {
+  const focusedOption = interaction.data?.options?.find((option) => option.focused);
+  if (
+    (interaction.data?.name !== "pbem-delete" && interaction.data?.name !== "pbem-reminders") ||
+    focusedOption?.name !== "game" ||
+    !interaction.guild_id
+  ) {
+    return immediateResponse(8, { choices: [] });
+  }
+
+  const query = typeof focusedOption.value === "string" ? focusedOption.value : "";
+  const games = await openRepository(config.databaseUrl)
+    .listActiveGamesInGuild(interaction.guild_id);
+  return immediateResponse(8, { choices: gameDeletionChoices(games.map(({ game }) => game), query) });
+}
+
+async function updateGameReminderDays(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+  reminderDays: number,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-reminders` in a server.",
+    });
+    return;
+  }
+
+  const snapshot = await openRepository(config.databaseUrl)
+    .updateActiveGameReminderDays(interaction.guild_id, gameName, reminderDays);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is no longer active in this server.",
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: reminderDays === 0
+      ? `Automated reminders are now off for **${snapshot.game.name}**.`
+      : `Automated reminders for **${snapshot.game.name}** will be sent after ${reminderDays} day${reminderDays === 1 ? "" : "s"} pending.`,
+  });
+}
+
 async function processGameDeletion(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -875,6 +934,25 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-reminders") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      const reminderDays = optionIntegerValue(interaction, "days");
+      if (!gameName || gameName.length > 80 || reminderDays === undefined || reminderDays < 0 || reminderDays > 365) {
+        return immediateResponse(4, {
+          content: "Choose an active game and set reminder days from 0-365.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-reminders` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = updateGameReminderDays(interaction, config, gameName, reminderDays);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-delete") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || gameName.length > 80 || !interaction.guild_id) {
@@ -911,7 +989,12 @@ async function handleInteraction(
   }
 
   if (interaction.type === 4) {
-    return immediateResponse(8, { choices: [] });
+    try {
+      return await autocompleteActiveGame(interaction, config);
+    } catch (error) {
+      console.error("Could not load PBEM game deletion suggestions:", error);
+      return immediateResponse(8, { choices: [] });
+    }
   }
 
   if (interaction.type === 3) {

@@ -380,6 +380,22 @@ export function openRepository(databaseUrl: string) {
       return rows[0] ? mapSnapshot(rows[0]) : null;
     },
 
+    async updateActiveGameReminderDays(
+      guildId: string,
+      name: string,
+      reminderDays: number,
+    ): Promise<GameSnapshot | null> {
+      await ensureSchema();
+      const rows = (await sql`
+        UPDATE pbem_games
+        SET reminder_days = ${reminderDays}, version = version + 1
+        WHERE guild_id = ${guildId}
+          AND status = 'active' AND lower(name) = lower(${name.trim()})
+        RETURNING *
+      `) as GameRow[];
+      return rows[0] ? mapSnapshot(rows[0]) : null;
+    },
+
     async deleteActiveGame(gameId: string, guildId: string): Promise<GameSnapshot | null> {
       await ensureSchema();
       const rows = (await sql`

@@ -311,7 +311,7 @@ commands once using the application ID and bot token.
    npm run register-commands
    ```
 
-8. Look for the success message that says five global application commands were
+8. Look for the success message that says six global application commands were
    registered. If the command reports a Discord error, recheck the application
    ID/token pair in `.env`; they must belong to the same Discord application.
 
@@ -324,7 +324,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-remind`, `/pbem-delete`, `/pbem-list`, and
+`/pbem`, `/pbem-remind`, `/pbem-reminders`, `/pbem-delete`, `/pbem-list`, and
 `/pbem-delete-all` are listed.
 
 ## 6. Verify the bot
@@ -449,7 +449,11 @@ local test is finished.
 - `/pbem-remind game` manually mentions the pending players for the named game
   in the current channel. Game names must be unique within a server; matching
   ignores capitalization.
-- `/pbem-delete game` asks for confirmation, then removes that active game and
+- `/pbem-reminders game days` changes the automated reminder threshold for an
+  active game anywhere in the server. Set `days` to 0 to disable reminders.
+  Reminders are checked daily at 09:00 UTC and sent privately by DM.
+- `/pbem-delete game` offers active games in the server as autocomplete
+  suggestions. Select one to review a confirmation, then remove the game and
   its board. Any server member can confirm deletion. The command can be run in
   any channel in that server.
 - `/pbem-list` privately lists games in the server, including active-game

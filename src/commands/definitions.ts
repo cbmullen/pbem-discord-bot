@@ -47,16 +47,40 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-reminders",
+    description: "Set automated reminder days for a game",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 4,
+        name: "days",
+        description: "Pending days before a reminder (0 disables reminders)",
+        min_value: 0,
+        max_value: 365,
+        required: true,
+      },
+    ],
+  },
+  {
     name: "pbem-delete",
     description: "Delete a game and its status board",
     options: [
       {
         type: 3,
         name: "game",
-        description: "The game name in this server",
+        description: "Choose an active game in this server",
         min_length: 1,
         max_length: 80,
         required: true,
+        autocomplete: true,
       },
     ],
   },
