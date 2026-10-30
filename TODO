@@ -1,0 +1,13 @@
+# Things TODO
+
+- Skip / vacation / pause. Let a player be marked “away” so simultaneous games don’t stall, and let the whole game be paused.
+- Add or remove players mid-game. Players drop out and others join in long-running games. A /pbem-players command or a board button would cover it.
+- Game end and archive. Add “finish game” with a final summary, rather than only deleting. That keeps stats and frees the name.
+Notifications and reminders
+- Per-user reminder preferences. A /pbem-notify command to choose DM, channel ping, or none, plus quiet hours or a timezone, so the 09:00 UTC reminder doesn’t wake people.
+- Game notes and links. Let the creator attach a link (a Google Sheet, Tabletop Simulator save, or Dropbox file) or a pinned note to the board. PBEM games often revolve around a shared file.
+- Convert mode. Let a consecutive or simultaneous game be upgraded to both later.
+- Templates. /pbem-clone to start a new game with the same players, useful for rematches.
+- Stats command. Average turn time per player, slowest and fastest, and games played.
+- Error reporting to a channel or webhook. You already have a webhook for dependency bumps, so reuse the pattern for failed interactions.
+- Auto-cleanup. Archive or warn about games with no activity for N days, since the free Neon tier has storage limits.
