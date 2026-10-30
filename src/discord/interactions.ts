@@ -6,6 +6,7 @@ import {
 import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
+import { buildGameStatusEmbed } from "../ui/game-status.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -679,7 +680,12 @@ async function autocompleteActiveGame(
 ): Promise<Response> {
   const focusedOption = interaction.data?.options?.find((option) => option.focused);
   if (
-    !["pbem-delete", "pbem-reminders", "pbem-remind"].includes(interaction.data?.name ?? "") ||
+    ![
+      "pbem-delete",
+      "pbem-reminders",
+      "pbem-remind",
+      "pbem-status",
+    ].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
     !interaction.guild_id
   ) {
@@ -690,6 +696,28 @@ async function autocompleteActiveGame(
   const games = await openRepository(config.databaseUrl)
     .listActiveGamesInGuild(interaction.guild_id);
   return immediateResponse(8, { choices: activeGameChoices(games.map(({ game }) => game), query) });
+}
+
+async function processGameStatus(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+): Promise<void> {
+  const snapshot = interaction.guild_id
+    ? await openRepository(config.databaseUrl)
+      .getActiveGameByNameInGuild(interaction.guild_id, gameName)
+    : null;
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    embeds: [buildGameStatusEmbed(snapshot)],
+    allowed_mentions: { parse: [] },
+  });
 }
 
 async function updateGameReminderDays(
@@ -947,6 +975,18 @@ async function handleInteraction(
         });
       }
       const task = updateGameReminderDays(interaction, config, gameName, reminderDays);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
+    if (commandName === "pbem-status") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      if (!gameName || gameName.length > 80 || !interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Choose an active game and use `/pbem-status` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processGameStatus(interaction, config, gameName);
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 

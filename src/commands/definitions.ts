@@ -86,6 +86,21 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-status",
+    description: "Privately view the status of a game",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
     name: "pbem-list",
     description: "List PBEM games in this server",
   },

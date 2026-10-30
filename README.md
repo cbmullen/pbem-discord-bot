@@ -336,8 +336,8 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-remind`, `/pbem-reminders`, `/pbem-delete`, `/pbem-list`, and
-`/pbem-delete-all` are listed.
+`/pbem`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-delete`,
+`/pbem-list`, and `/pbem-delete-all` are listed.
 
 ## 6. Verify the bot
 
@@ -466,6 +466,8 @@ local test is finished.
 - `/pbem-remind game` offers active games in the server as autocomplete
   suggestions, then manually mentions pending players in that game's channel.
   The command can be run in any channel in the server.
+- `/pbem-status game` privately shows an active game's mode, player statuses,
+  start time, and automated reminder setting.
 - `/pbem-reminders game days` changes the automated reminder threshold for an
   active game anywhere in the server. Set `days` to 0 to disable reminders.
   Reminders are checked daily at 09:00 UTC and sent privately by DM.
