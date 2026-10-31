@@ -1218,9 +1218,7 @@ async function handleInteraction(
     if (!gameId || (action !== "player" && action !== "away" && action !== "mode")) {
       return immediateResponse(4, { content: "This button is invalid.", flags: EPHEMERAL });
     }
-    // Away-player buttons use the same game-mode selection rules as every other player button.
-    const boardAction = action === "away" ? "player" : action;
-    const task = processBoardInteraction(interaction, config, boardAction, gameId, playerId);
+    const task = processBoardInteraction(interaction, config, action, gameId, playerId);
     return scheduledResponse(6, undefined, task, schedule, interaction, config);
   }
 
