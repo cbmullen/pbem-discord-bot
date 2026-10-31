@@ -6,7 +6,6 @@ import {
 import {
   activeAway,
   awayPlayers,
-  formatAwayDate,
   isGamePaused,
   parseAwayUntil,
 } from "../game/away.js";
@@ -590,20 +589,6 @@ export async function moveUpdatedBoardToLatest(
   throw new Error("Could not move the PBEM board because it changed repeatedly.");
 }
 
-function awayExplanation(
-  playerId: string,
-  until: string | null,
-  gameName: string,
-): string {
-  const when = until ? ` until ${formatAwayDate(until)}` : "";
-  const autoReturn = until ? " It also ends automatically on that date." : "";
-  return (
-    `<@${playerId}> is away${when}, so **${gameName}** is paused and reminders are off. ` +
-    "To bring them back, run `/pbem-back` and choose them as the player " +
-    `(leave \`player\` empty if it is you).${autoReturn}`
-  );
-}
-
 function discordDate(until: string): string {
   const seconds = Math.floor(Date.parse(until) / 1000);
   return Number.isFinite(seconds) ? `<t:${seconds}:D>` : "an unknown date";
@@ -717,39 +702,6 @@ async function processBack(
   });
 }
 
-// Click on an away player's (grey) button: explain how to return, privately.
-async function processAwayButton(
-  interaction: InteractionPayload,
-  config: RuntimeConfig,
-  gameId: string,
-  playerId: string,
-): Promise<void> {
-  const repository = openRepository(config.databaseUrl);
-  const snapshot = await repository.getSnapshot(gameId);
-  if (!snapshot || snapshot.game.status !== "active") {
-    await postEphemeralFollowup(interaction, config, "This game is no longer active.");
-    return;
-  }
-  const info = activeAway(snapshot.away)[playerId];
-  if (!info) {
-    // The return date passed since this board was drawn; show the fresh state.
-    if (interaction.message?.id === snapshot.game.messageId) {
-      await moveUpdatedBoardToLatest(repository, gameId, config.botToken);
-    }
-    await postEphemeralFollowup(
-      interaction,
-      config,
-      "That player is no longer away. I have refreshed the board.",
-    );
-    return;
-  }
-  await postEphemeralFollowup(
-    interaction,
-    config,
-    awayExplanation(playerId, info.until, snapshot.game.name),
-  );
-}
-
 async function processBoardInteraction(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -774,18 +726,6 @@ async function processBoardInteraction(
     current.game.guildId !== guildId ||
     current.game.channelId !== channelId
   ) {
-    return;
-  }
-
-  const awayInfo = action === "player" && playerId
-    ? activeAway(current.away)[playerId]
-    : undefined;
-  if (awayInfo && playerId) {
-    await postEphemeralFollowup(
-      interaction,
-      config,
-      awayExplanation(playerId, awayInfo.until, current.game.name),
-    );
     return;
   }
 
@@ -1275,14 +1215,12 @@ async function handleInteraction(
       const task = processDeleteAllGames(interaction, config);
       return scheduledResponse(6, undefined, task, schedule, interaction, config);
     }
-    if (action === "away" && gameId && playerId) {
-      const task = processAwayButton(interaction, config, gameId, playerId);
-      return scheduledResponse(6, undefined, task, schedule, interaction, config);
-    }
-    if (!gameId || (action !== "player" && action !== "mode")) {
+    if (!gameId || (action !== "player" && action !== "away" && action !== "mode")) {
       return immediateResponse(4, { content: "This button is invalid.", flags: EPHEMERAL });
     }
-    const task = processBoardInteraction(interaction, config, action, gameId, playerId);
+    // Away-player buttons use the same game-mode selection rules as every other player button.
+    const boardAction = action === "away" ? "player" : action;
+    const task = processBoardInteraction(interaction, config, boardAction, gameId, playerId);
     return scheduledResponse(6, undefined, task, schedule, interaction, config);
   }
 
