@@ -34,28 +34,14 @@ export function buildGameBoard(
   for (let index = 0; index < players.length; index += 5) {
     components.push({
       type: 1,
-      components: players.slice(index, index + 5).map((player): ButtonComponent => {
-        const awayInfo = away[player.userId];
-        if (awayInfo) {
-          // Grey but deliberately not `disabled`: Discord does not deliver clicks
-          // on disabled buttons, and this one explains how to bring the player back.
-          const suffix = ` - ${awayLabel(awayInfo.until, now)}`;
-          return {
-            type: 2,
-            style: 2,
-            label: `${player.username.slice(0, 80 - suffix.length)}${suffix}`,
-            custom_id: `pbem:away:${game.id}:${player.userId}`,
-          };
-        }
-        return {
-          type: 2,
-          style: player.status === "pending" ? 1 : 3,
-          disabled:
-            game.activeMode === "consecutive" && player.status === "pending",
-          label: `${player.username} - ${player.status}`.slice(0, 80),
-          custom_id: `pbem:player:${game.id}:${player.userId}`,
-        };
-      }),
+      components: players.slice(index, index + 5).map((player): ButtonComponent => ({
+        type: 2,
+        style: player.status === "pending" ? 1 : 3,
+        disabled:
+          game.activeMode === "consecutive" && player.status === "pending",
+        label: `${player.username} - ${player.status}`.slice(0, 80),
+        custom_id: `pbem:player:${game.id}:${player.userId}`,
+      })),
     });
   }
 
@@ -76,10 +62,14 @@ export function buildGameBoard(
 
   return {
     content:
-      `**Playing: ${game.name}**\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}` +
+      `**Playing: ${game.name}**` +
       (awayNow.length > 0
-        ? `\n⏸️ **Paused** - waiting for ${awayNow.map((player) => `<@${player.userId}>`).join(", ")} to return.`
-        : ""),
+        ? `\n\n⏸️ **Away**\n${awayNow.map((player) => {
+            const info = away[player.userId]!;
+            return `• <@${player.userId}> — ${awayLabel(info.until, now)}`;
+          }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back.`
+        : "") +
+      `\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
     components,
     allowed_mentions: {
       users: announcePending ? pending.map((player) => player.userId) : [],

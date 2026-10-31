@@ -24,6 +24,8 @@ export interface Player {
   status: PlayerStatus;
   pendingSince: string | null;
   lastUpdatedAt: string;
+  /** Whether this player is currently marked away on their server. */
+  away?: boolean;
 }
 
 export interface SelectedPlayer {

@@ -6,6 +6,7 @@ import {
   switchMode,
 } from "../game/turns.js";
 import { getDueReminderPlayers } from "../game/reminders.js";
+import { activeAway } from "../game/away.js";
 import type {
   ActiveMode,
   AwayMap,
@@ -65,6 +66,7 @@ export interface PublicGameStatus {
     username: string;
     status: Player["status"];
     pendingSince: string | null;
+    away: boolean;
   }>;
 }
 
@@ -171,10 +173,18 @@ export function openRepository(databaseUrl: string) {
     const byGuild = await loadAway([
       ...new Set(snapshots.map(({ game }) => game.guildId)),
     ]);
-    return snapshots.map((snapshot) => ({
-      ...snapshot,
-      away: byGuild.get(snapshot.game.guildId) ?? {},
-    }));
+    return snapshots.map((snapshot) => {
+      const away = byGuild.get(snapshot.game.guildId) ?? {};
+      const active = activeAway(away);
+      return {
+        ...snapshot,
+        away,
+        players: snapshot.players.map((player) => ({
+          ...player,
+          away: active[player.userId] !== undefined,
+        })),
+      };
+    });
   }
 
   const repository = {
@@ -387,6 +397,7 @@ export function openRepository(databaseUrl: string) {
         created_at: string;
         players: Player[] | string;
       }>;
+      const awayByGuild = await loadAway([...new Set(rows.map((row) => row.guild_id))]);
       return rows.map((row) => ({
         guildId: row.guild_id,
         name: row.name,
@@ -398,6 +409,7 @@ export function openRepository(databaseUrl: string) {
           username: player.username,
           status: player.status,
           pendingSince: player.pendingSince,
+          away: activeAway(awayByGuild.get(row.guild_id))[player.userId] !== undefined,
         })),
       }));
     },
