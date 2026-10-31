@@ -31,7 +31,17 @@ export interface SelectedPlayer {
   username: string;
 }
 
+export interface AwayInfo {
+  /** ISO timestamp when the player is back, or null when no return date was set. */
+  until: string | null;
+}
+
+/** Active away records for one server, keyed by Discord user id. */
+export type AwayMap = Record<string, AwayInfo>;
+
 export interface GameSnapshot {
   game: Game;
   players: Player[];
+  /** Server-wide away records. Absent means "not loaded", which reads as nobody away. */
+  away?: AwayMap;
 }

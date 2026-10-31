@@ -101,6 +101,38 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-away",
+    description: "Mark a player as away in every game they are in on this server",
+    options: [
+      {
+        type: 6,
+        name: "player",
+        description: "Who is away (defaults to you)",
+        required: false,
+      },
+      {
+        type: 3,
+        name: "until",
+        description: "Return date as YYYY-MM-DD (leave empty for no return date)",
+        min_length: 10,
+        max_length: 10,
+        required: false,
+      },
+    ],
+  },
+  {
+    name: "pbem-back",
+    description: "Clear a player's away status on this server",
+    options: [
+      {
+        type: 6,
+        name: "player",
+        description: "Who is back (defaults to you)",
+        required: false,
+      },
+    ],
+  },
+  {
     name: "pbem-list",
     description: "List PBEM games in this server",
   },

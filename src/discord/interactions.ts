@@ -3,6 +3,13 @@ import {
   GameNameInUseError,
   openRepository,
 } from "../database/repository.js";
+import {
+  activeAway,
+  awayPlayers,
+  formatAwayDate,
+  isGamePaused,
+  parseAwayUntil,
+} from "../game/away.js";
 import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
@@ -467,6 +474,10 @@ async function setupGameFromUserPicker(
     const initialSnapshot: GameSnapshot = {
       game: { ...draft.game, activeMode, status: "active" },
       players: createInitialPlayers(selected, activeMode, new Date().toISOString()),
+      away: await repository.getAwayMap(
+        draft.game.guildId,
+        selected.map((player) => player.userId),
+      ),
     };
     const board = await postChannelMessage(
       draft.game.channelId,
@@ -526,7 +537,7 @@ async function sendPendingReminder(
   });
 }
 
-async function moveUpdatedBoardToLatest(
+export async function moveUpdatedBoardToLatest(
   repository: ReturnType<typeof openRepository>,
   gameId: string,
   token: string,
@@ -579,6 +590,166 @@ async function moveUpdatedBoardToLatest(
   throw new Error("Could not move the PBEM board because it changed repeatedly.");
 }
 
+function awayExplanation(
+  playerId: string,
+  until: string | null,
+  gameName: string,
+): string {
+  const when = until ? ` until ${formatAwayDate(until)}` : "";
+  const autoReturn = until ? " It also ends automatically on that date." : "";
+  return (
+    `<@${playerId}> is away${when}, so **${gameName}** is paused and reminders are off. ` +
+    "To bring them back, run `/pbem-back` and choose them as the player " +
+    `(leave \`player\` empty if it is you).${autoReturn}`
+  );
+}
+
+function discordDate(until: string): string {
+  const seconds = Math.floor(Date.parse(until) / 1000);
+  return Number.isFinite(seconds) ? `<t:${seconds}:D>` : "an unknown date";
+}
+
+// Reposts the board of every active game the player is in so "paused" and the
+// away buttons appear (or disappear) straight away.
+async function refreshBoardsForPlayer(
+  repository: ReturnType<typeof openRepository>,
+  config: RuntimeConfig,
+  guildId: string,
+  userId: string,
+): Promise<{ names: string[]; failed: string[] }> {
+  const games = await repository.listActiveGamesForPlayer(guildId, userId);
+  const failed: string[] = [];
+  for (const { game } of games) {
+    try {
+      await moveUpdatedBoardToLatest(repository, game.id, config.botToken);
+    } catch (error) {
+      console.error("Could not refresh a PBEM board after an away change:", error);
+      failed.push(game.name);
+    }
+  }
+  return { names: games.map(({ game }) => game.name), failed };
+}
+
+function gameNameList(names: string[]): string {
+  return names.map((name) => `**${name}**`).join(", ");
+}
+
+async function processAway(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const actorId = interactionUserId(interaction);
+  if (!guildId || !actorId) {
+    throw new Error("Away interaction is missing server or user context.");
+  }
+  const targetId = optionValue(interaction, "player") ?? actorId;
+  if (interaction.data?.resolved?.users?.[targetId]?.bot) {
+    await editOriginal(interaction, config, { content: "Bots cannot be marked as away." });
+    return;
+  }
+
+  let until: string | null = null;
+  const untilInput = optionValue(interaction, "until")?.trim();
+  if (untilInput) {
+    const parsed = parseAwayUntil(untilInput);
+    if (!parsed.ok) {
+      await editOriginal(interaction, config, { content: parsed.error });
+      return;
+    }
+    until = parsed.until;
+  }
+
+  const repository = openRepository(config.databaseUrl);
+  await repository.setAway(guildId, targetId, until, actorId);
+  const { names, failed } = await refreshBoardsForPlayer(repository, config, guildId, targetId);
+
+  const when = until ? ` until ${discordDate(until)}` : " with no return date";
+  const lines = [`<@${targetId}> is now away${when}.`];
+  lines.push(
+    names.length > 0
+      ? `Paused: ${gameNameList(names)}. Reminders stay off in those games until nobody in them is away.`
+      : "They are not in an active game here yet; this applies to any game they are added to.",
+  );
+  if (failed.length > 0) {
+    lines.push(`I could not update the board for ${gameNameList(failed)}; it will refresh on its next click.`);
+  }
+  lines.push("Use `/pbem-back` to clear it early.");
+  await editOriginal(interaction, config, {
+    content: lines.join("\n"),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function processBack(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const actorId = interactionUserId(interaction);
+  if (!guildId || !actorId) {
+    throw new Error("Back interaction is missing server or user context.");
+  }
+  const targetId = optionValue(interaction, "player") ?? actorId;
+  const repository = openRepository(config.databaseUrl);
+  const wasAway = await repository.clearAway(guildId, targetId);
+  if (!wasAway) {
+    await editOriginal(interaction, config, {
+      content: `<@${targetId}> is not marked as away.`,
+      allowed_mentions: { parse: [] },
+    });
+    return;
+  }
+
+  const { names, failed } = await refreshBoardsForPlayer(repository, config, guildId, targetId);
+  const lines = [`<@${targetId}> is back.`];
+  if (names.length > 0) {
+    lines.push(
+      `Updated: ${gameNameList(names)}. A game stays paused while anyone else in it is still away.`,
+    );
+  }
+  if (failed.length > 0) {
+    lines.push(`I could not update the board for ${gameNameList(failed)}; it will refresh on its next click.`);
+  }
+  await editOriginal(interaction, config, {
+    content: lines.join("\n"),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+// Click on an away player's (grey) button: explain how to return, privately.
+async function processAwayButton(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string,
+  playerId: string,
+): Promise<void> {
+  const repository = openRepository(config.databaseUrl);
+  const snapshot = await repository.getSnapshot(gameId);
+  if (!snapshot || snapshot.game.status !== "active") {
+    await postEphemeralFollowup(interaction, config, "This game is no longer active.");
+    return;
+  }
+  const info = activeAway(snapshot.away)[playerId];
+  if (!info) {
+    // The return date passed since this board was drawn; show the fresh state.
+    if (interaction.message?.id === snapshot.game.messageId) {
+      await moveUpdatedBoardToLatest(repository, gameId, config.botToken);
+    }
+    await postEphemeralFollowup(
+      interaction,
+      config,
+      "That player is no longer away. I have refreshed the board.",
+    );
+    return;
+  }
+  await postEphemeralFollowup(
+    interaction,
+    config,
+    awayExplanation(playerId, info.until, snapshot.game.name),
+  );
+}
+
 async function processBoardInteraction(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -606,6 +777,18 @@ async function processBoardInteraction(
     return;
   }
 
+  const awayInfo = action === "player" && playerId
+    ? activeAway(current.away)[playerId]
+    : undefined;
+  if (awayInfo && playerId) {
+    await postEphemeralFollowup(
+      interaction,
+      config,
+      awayExplanation(playerId, awayInfo.until, current.game.name),
+    );
+    return;
+  }
+
   const result =
     action === "mode"
       ? await repository.switchGameMode(gameId, actorId)
@@ -627,6 +810,16 @@ async function processReminder(
     if (!snapshot || snapshot.game.status !== "active") {
       await editOriginal(interaction, config, {
         content: "That game is not active in this server.",
+      });
+      return;
+    }
+    if (isGamePaused(snapshot.players, snapshot.away)) {
+      const away = awayPlayers(snapshot.players, snapshot.away)
+        .map((player) => `<@${player.userId}>`)
+        .join(", ");
+      await editOriginal(interaction, config, {
+        content: `**${snapshot.game.name}** is paused while ${away} ${away.includes(",") ? "are" : "is"} away, so reminders are off until everyone is back.`,
+        allowed_mentions: { parse: [] },
       });
       return;
     }
@@ -1002,6 +1195,19 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-away" || commandName === "pbem-back") {
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: `Use \`/${commandName}\` in a server.`,
+          flags: EPHEMERAL,
+        });
+      }
+      const task = commandName === "pbem-away"
+        ? processAway(interaction, config)
+        : processBack(interaction, config);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-list") {
       if (!interaction.guild_id) {
         return immediateResponse(4, {
@@ -1067,6 +1273,10 @@ async function handleInteraction(
     }
     if (action === "delete-all-confirm") {
       const task = processDeleteAllGames(interaction, config);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
+    if (action === "away" && gameId && playerId) {
+      const task = processAwayButton(interaction, config, gameId, playerId);
       return scheduledResponse(6, undefined, task, schedule, interaction, config);
     }
     if (!gameId || (action !== "player" && action !== "mode")) {

@@ -1,8 +1,11 @@
+import { activeAway, awayLabel, awayPlayers } from "../game/away.js";
 import type { GameSnapshot } from "../game/types.js";
 
 export function buildGameStatusEmbed(snapshot: GameSnapshot) {
   const { game, players } = snapshot;
   const pendingPlayers = players.filter((player) => player.status === "pending");
+  const away = activeAway(snapshot.away);
+  const awayNow = awayPlayers(players, away);
   const startedAt = Math.floor(Date.parse(game.createdAt) / 1000);
   const started = Number.isFinite(startedAt)
     ? `<t:${startedAt}:f>`
@@ -27,6 +30,13 @@ export function buildGameStatusEmbed(snapshot: GameSnapshot) {
           : `After ${game.reminderDays} day${game.reminderDays === 1 ? "" : "s"} pending`,
         inline: true,
       },
+      ...(awayNow.length > 0
+        ? [{
+            name: "Paused",
+            value: `Yes - waiting for ${awayNow.length} away player${awayNow.length === 1 ? "" : "s"} to return. Reminders are off.`,
+            inline: false,
+          }]
+        : []),
     ],
     description: players.length
       ? players.map((player) => {
@@ -37,7 +47,9 @@ export function buildGameStatusEmbed(snapshot: GameSnapshot) {
             ? ` · <t:${pendingSince}:R>`
             : "";
           const username = player.username.replaceAll("@", "@\u200b");
-          return `• ${username} — ${player.status === "pending" ? "Pending" : "Done"}${pendingDuration}`;
+          const awayInfo = away[player.userId];
+          const awayNote = awayInfo ? ` · ${awayLabel(awayInfo.until)}` : "";
+          return `• ${username} — ${player.status === "pending" ? "Pending" : "Done"}${pendingDuration}${awayNote}`;
         }).join("\n")
       : "No players",
   };

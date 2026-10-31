@@ -52,3 +52,35 @@ test("status embed shows game settings and each player's current status", () => 
     "• Done player — Done\n• Pending player — Pending · <t:1793268000:R>",
   );
 });
+
+test("status embed shows away players and that the game is paused", () => {
+  const snapshot: GameSnapshot = {
+    game: {
+      id: "game-id",
+      name: "Test game",
+      mode: "consecutive",
+      activeMode: "consecutive",
+      reminderDays: 1,
+      guildId: "guild-id",
+      channelId: "channel-id",
+      messageId: "message-id",
+      createdBy: "creator-id",
+      createdAt: "2026-10-29T13:06:00.000Z",
+      status: "active",
+    },
+    players: [
+      {
+        userId: "away-user",
+        username: "Away player",
+        position: 0,
+        status: "pending",
+        pendingSince: "2026-10-29T10:00:00.000Z",
+        lastUpdatedAt: "2026-10-29T10:00:00.000Z",
+      },
+    ],
+    away: { "away-user": { until: null } },
+  };
+  const embed = buildGameStatusEmbed(snapshot);
+  assert.ok(embed.fields.some((field) => field.name === "Paused" && /Reminders are off/.test(field.value)));
+  assert.match(embed.description, /Away player — Pending · <t:1793268000:R> · Away \(no return date\)/);
+});

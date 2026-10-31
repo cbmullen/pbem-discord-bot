@@ -134,8 +134,9 @@ contains a password, so treat it like a secret.
     Do not put it in a public GitHub file, chat, screenshot, or source code.
 
 You do **not** need to create database tables or run SQL yourself. Database
-schema changes are applied by the versioned `npm run migrate:db` command rather
-than by Discord requests. Run it from the repository root with `DATABASE_URL`
+schema changes (including the `pbem_away` table used by `/pbem-away`) are
+applied by the versioned `npm run migrate:db` command rather than by Discord
+requests. Run it from the repository root with `DATABASE_URL`
 set in `.env` before deploying schema changes or using a new database.
 Afterward, you can confirm the tables from the project's **Tables** view in
 Neon.
@@ -323,7 +324,7 @@ commands once using the application ID and bot token.
    npm run register-commands
    ```
 
-8. Look for the success message that says six global application commands were
+8. Look for the success message that says nine global application commands were
    registered. If the command reports a Discord error, recheck the application
    ID/token pair in `.env`; they must belong to the same Discord application.
 
@@ -337,7 +338,7 @@ definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
 `/pbem`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-delete`,
-`/pbem-list`, and `/pbem-delete-all` are listed.
+`/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and `/pbem-back` are listed.
 
 ## 6. Verify the bot
 
@@ -475,6 +476,19 @@ local test is finished.
   suggestions. Select one to review a confirmation, then remove the game and
   its board. Any server member can confirm deletion. The command can be run in
   any channel in that server.
+- `/pbem-away [player] [until]` marks a player as away in **every** active game
+  they are in on this server (and any game they are added to later). `player`
+  defaults to you, and anyone may mark anyone away. `until` is an optional return
+  date as `YYYY-MM-DD`; the player is back at 00:00 UTC on that date. Without it,
+  the player stays away until `/pbem-back`.
+- `/pbem-back [player]` clears a player's away status. `player` defaults to you.
+- While anyone in a game is away, that game is **paused**: its board says so,
+  the away player's button turns grey and reads `Away until <date>` (clicking it
+  privately explains how to return), and **no reminders** (automated or
+  `/pbem-remind`) are sent to anyone in that game. Turns are never skipped: other
+  players' buttons keep working and the away player's status is left untouched.
+  A game resumes when nobody in it is away. A return date ends the pause
+  automatically; the daily 09:00 UTC job tidies up and refreshes the board.
 - `/pbem-list` privately lists games in the server, including active-game
   mode/player/pending counts and any pending setups.
 - `/pbem-delete-all` shows a confirmation before permanently deleting every

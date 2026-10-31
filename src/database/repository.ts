@@ -8,6 +8,7 @@ import {
 import { getDueReminderPlayers } from "../game/reminders.js";
 import type {
   ActiveMode,
+  AwayMap,
   Game,
   GameMode,
   GameSnapshot,
@@ -65,6 +66,27 @@ export interface PublicGameStatus {
     status: Player["status"];
     pendingSince: string | null;
   }>;
+}
+
+interface AwayRow {
+  guild_id: string;
+  user_id: string;
+  until: string | Date | null;
+}
+
+function toIsoOrNull(value: string | Date | null): string | null {
+  if (value === null) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+export function groupAwayRows(rows: AwayRow[]): Map<string, AwayMap> {
+  const byGuild = new Map<string, AwayMap>();
+  for (const row of rows) {
+    const guildAway = byGuild.get(row.guild_id) ?? {};
+    guildAway[row.user_id] = { until: toIsoOrNull(row.until) };
+    byGuild.set(row.guild_id, guildAway);
+  }
+  return byGuild;
 }
 
 export interface TransitionResult extends GameSnapshot {
@@ -130,6 +152,31 @@ export function openRepository(databaseUrl: string) {
     return rows[0];
   }
 
+  // Away records are per server, not per game. Rows whose return date has
+  // passed are ignored here and swept up by the daily cron job.
+  async function loadAway(
+    guildIds: string[],
+    now = new Date(),
+  ): Promise<Map<string, AwayMap>> {
+    if (guildIds.length === 0) return new Map();
+    const rows = (await sql`
+      SELECT guild_id, user_id, until FROM pbem_away
+      WHERE guild_id = ANY(${guildIds}::text[])
+        AND (until IS NULL OR until > ${now.toISOString()})
+    `) as AwayRow[];
+    return groupAwayRows(rows);
+  }
+
+  async function withAway(snapshots: GameSnapshot[]): Promise<GameSnapshot[]> {
+    const byGuild = await loadAway([
+      ...new Set(snapshots.map(({ game }) => game.guildId)),
+    ]);
+    return snapshots.map((snapshot) => ({
+      ...snapshot,
+      away: byGuild.get(snapshot.game.guildId) ?? {},
+    }));
+  }
+
   const repository = {
     async claimInteraction(interactionId: string): Promise<boolean> {
       const rows = (await sql`
@@ -181,7 +228,64 @@ export function openRepository(databaseUrl: string) {
 
     async getSnapshot(gameId: string): Promise<GameSnapshot | null> {
       const row = await getRow(gameId);
-      return row ? mapSnapshot(row) : null;
+      return row ? (await withAway([mapSnapshot(row)]))[0]! : null;
+    },
+
+    async getAwayMap(guildId: string, userIds: string[]): Promise<AwayMap> {
+      const guildAway = (await loadAway([guildId])).get(guildId) ?? {};
+      return Object.fromEntries(
+        Object.entries(guildAway).filter(([userId]) => userIds.includes(userId)),
+      );
+    },
+
+    async setAway(
+      guildId: string,
+      userId: string,
+      until: string | null,
+      setBy: string,
+    ): Promise<void> {
+      await sql`
+        INSERT INTO pbem_away (guild_id, user_id, until, set_by, set_at)
+        VALUES (${guildId}, ${userId}, ${until}, ${setBy}, NOW())
+        ON CONFLICT (guild_id, user_id)
+        DO UPDATE SET until = EXCLUDED.until,
+                      set_by = EXCLUDED.set_by,
+                      set_at = NOW()
+      `;
+    },
+
+    /** Returns true when the player really was away (an expired record does not count). */
+    async clearAway(guildId: string, userId: string): Promise<boolean> {
+      const rows = (await sql`
+        DELETE FROM pbem_away
+        WHERE guild_id = ${guildId} AND user_id = ${userId}
+        RETURNING (until IS NULL OR until > NOW()) AS was_away
+      `) as Array<{ was_away: boolean }>;
+      return rows[0]?.was_away === true;
+    },
+
+    /** Deletes records whose return date has passed and says who they belonged to. */
+    async sweepExpiredAway(): Promise<Array<{ guildId: string; userId: string }>> {
+      const rows = (await sql`
+        DELETE FROM pbem_away
+        WHERE until IS NOT NULL AND until <= NOW()
+        RETURNING guild_id, user_id
+      `) as Array<{ guild_id: string; user_id: string }>;
+      return rows.map((row) => ({ guildId: row.guild_id, userId: row.user_id }));
+    },
+
+    async listActiveGamesForPlayer(
+      guildId: string,
+      userId: string,
+    ): Promise<GameSnapshot[]> {
+      const rows = (await sql`
+        SELECT * FROM pbem_games
+        WHERE guild_id = ${guildId}
+          AND status = 'active'
+          AND players @> ${JSON.stringify([{ userId }])}::jsonb
+        ORDER BY lower(name), created_at
+      `) as GameRow[];
+      return withAway(rows.map(mapSnapshot));
     },
 
     async listDueReminders(now = new Date()): Promise<DueReminder[]> {
@@ -189,12 +293,17 @@ export function openRepository(databaseUrl: string) {
         SELECT * FROM pbem_games
         WHERE status = 'active' AND reminder_days > 0
       `) as GameRow[];
+      const awayByGuild = await loadAway(
+        [...new Set(rows.map((row) => row.guild_id))],
+        now,
+      );
       return rows.flatMap((row) => {
         const snapshot = mapSnapshot(row);
         return getDueReminderPlayers(
           snapshot.players,
           snapshot.game.reminderDays,
           now,
+          awayByGuild.get(snapshot.game.guildId),
         ).map((player) => ({
           gameId: snapshot.game.id,
           gameName: snapshot.game.name,
@@ -220,6 +329,14 @@ export function openRepository(databaseUrl: string) {
         WHERE game.id = ${reminder.gameId}
           AND game.status = 'active'
           AND game.reminder_days > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM pbem_away AS away
+            WHERE away.guild_id = game.guild_id
+              AND (away.until IS NULL OR away.until > NOW())
+              AND game.players @> jsonb_build_array(
+                jsonb_build_object('userId', away.user_id)
+              )
+          )
           AND game.players @> ${JSON.stringify([{
             userId: reminder.userId,
             status: "pending",
@@ -310,7 +427,7 @@ export function openRepository(databaseUrl: string) {
           AND status = 'active' AND lower(name) = lower(${name.trim()})
         LIMIT 1
       `) as GameRow[];
-      return rows[0] ? mapSnapshot(rows[0]) : null;
+      return rows[0] ? (await withAway([mapSnapshot(rows[0])]))[0]! : null;
     },
 
     async updateActiveGameReminderDays(
@@ -343,7 +460,7 @@ export function openRepository(databaseUrl: string) {
         WHERE guild_id = ${guildId} AND status = 'active'
         ORDER BY lower(name), created_at
       `) as GameRow[];
-      return rows.map(mapSnapshot);
+      return withAway(rows.map(mapSnapshot));
     },
 
     async listGamesInGuild(guildId: string): Promise<GameSnapshot[]> {

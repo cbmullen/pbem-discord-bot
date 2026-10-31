@@ -50,6 +50,19 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
     `;
     await sql`DROP INDEX IF EXISTS pbem_unique_game_name_per_channel`;
   },
+  async (sql) => {
+    // One row per player per server: a holiday applies to every game they are in.
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_away (
+        guild_id text NOT NULL,
+        user_id text NOT NULL,
+        until timestamptz,
+        set_by text NOT NULL,
+        set_at timestamptz NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (guild_id, user_id)
+      )
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {

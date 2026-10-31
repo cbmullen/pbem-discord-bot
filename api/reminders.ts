@@ -1,5 +1,6 @@
 import { openRepository } from "../src/database/repository.js";
 import type { DueReminder } from "../src/database/repository.js";
+import { moveUpdatedBoardToLatest } from "../src/discord/interactions.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -36,6 +37,29 @@ async function sendReminder(reminder: DueReminder, botToken: string): Promise<vo
   });
 }
 
+// Away records with a return date stop counting the moment that date passes.
+// This tidies them up and reposts the affected boards so "paused" disappears.
+async function endExpiredAway(
+  repository: ReturnType<typeof openRepository>,
+  botToken: string,
+): Promise<number> {
+  const expired = await repository.sweepExpiredAway();
+  const gameIds = new Set<string>();
+  for (const { guildId, userId } of expired) {
+    for (const { game } of await repository.listActiveGamesForPlayer(guildId, userId)) {
+      gameIds.add(game.id);
+    }
+  }
+  for (const gameId of gameIds) {
+    try {
+      await moveUpdatedBoardToLatest(repository, gameId, botToken);
+    } catch (error) {
+      console.error("Could not refresh a PBEM board after an away period ended:", error);
+    }
+  }
+  return expired.length;
+}
+
 export default {
   async fetch(request: Request): Promise<Response> {
     if (request.method !== "GET") {
@@ -62,6 +86,12 @@ export default {
     }
 
     const repository = openRepository(databaseUrl);
+    try {
+      const ended = await endExpiredAway(repository, botToken);
+      if (ended > 0) console.log(`Ended ${ended} expired PBEM away record(s).`);
+    } catch (error) {
+      console.error("Could not end expired PBEM away records:", error);
+    }
     const dueReminders = await repository.listDueReminders();
     let sent = 0;
     let failed = 0;
