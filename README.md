@@ -337,8 +337,9 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-delete`,
-`/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and `/pbem-back` are listed.
+`/pbem`, `/pbem-nodb`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
+`/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
+`/pbem-back` are listed.
 
 ## 6. Verify the bot
 
@@ -372,7 +373,9 @@ can now be turned off; Vercel handles interactions when Discord sends them.
   with `/api/interactions`.
 - Check that `DISCORD_PUBLIC_KEY` in Vercel exactly matches the application's
   **Public Key**, not its token or application ID.
-- Confirm that the four Discord/database variables were saved for **Production**.
+- Confirm that `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and
+  `DISCORD_PUBLIC_KEY` are set for **Production**. `DATABASE_URL` is also
+  required for the Neon-backed commands; `/pbem-nodb` does not use it.
 - If scheduled reminders are enabled, also confirm `CRON_SECRET` is set for
   **Production**.
 - After editing environment variables, redeploy so they take effect.
@@ -459,6 +462,12 @@ local test is finished.
 
 ## Commands and turn behavior
 
+- `/pbem-nodb name mode` creates a separate board without connecting to Neon.
+  Player status and turn-mode changes are stored only in the Discord board, and
+  newly pending players are mentioned in the channel. The game is lost if the
+  board message is deleted; list, status, away, and reminder commands do not
+  manage these games. Unlike database-backed boards, very closely timed clicks
+  can race because Discord does not offer conditional message edits.
 - `/pbem name mode` creates a game in the current channel and presents a private
   Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game.
   Optionally set `reminder-days` (0–365) to privately DM pending players once

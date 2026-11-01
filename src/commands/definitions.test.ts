@@ -40,3 +40,12 @@ test("/pbem-away and /pbem-back take an optional player, and away an optional da
     [["player", 6, false]],
   );
 });
+
+test("/pbem-nodb creates a game with name and mode but no database settings", () => {
+  const command = commands.find((entry) => entry.name === "pbem-nodb");
+  assert.ok(command);
+  assert.deepEqual(
+    optionsOf(command).map((option) => [option.name, option.type, option.required]),
+    [["name", 3, true], ["mode", 3, true]],
+  );
+});

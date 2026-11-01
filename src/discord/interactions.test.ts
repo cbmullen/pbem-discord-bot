@@ -107,7 +107,7 @@ test("signed Discord ping requests receive the required pong response", async ()
   process.env.DISCORD_BOT_TOKEN = "test-token";
   process.env.DISCORD_APPLICATION_ID = "test-application";
   process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
-  process.env.DATABASE_URL = "postgresql://test:test@localhost/test";
+  delete process.env.DATABASE_URL;
   try {
     const response = await handleDiscordRequest(
       signedRequest(Buffer.from('{"type":1}')),
@@ -159,5 +159,140 @@ test("invalid Discord signatures are rejected", async () => {
     else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
     if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previous.databaseUrl;
+  }
+});
+
+test("/pbem-nodb creates and updates a board without making a database request", async () => {
+  const previous = {
+    token: process.env.DISCORD_BOT_TOKEN,
+    applicationId: process.env.DISCORD_APPLICATION_ID,
+    publicKey: process.env.DISCORD_PUBLIC_KEY,
+    databaseUrl: process.env.DATABASE_URL,
+    fetch: globalThis.fetch,
+    consoleError: console.error,
+  };
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  process.env.DISCORD_APPLICATION_ID = "test-application";
+  process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
+  process.env.DATABASE_URL = "postgresql://test:test@localhost/test";
+  delete process.env.DATABASE_URL;
+  console.error = () => {};
+  let boardMessage: Record<string, unknown> | undefined;
+  let updatedBoard: Record<string, unknown> | undefined;
+  let notification: Record<string, unknown> | undefined;
+  globalThis.fetch = async (input, init) => {
+    const url = input instanceof Request
+      ? input.url
+      : input instanceof URL
+        ? input.href
+        : input;
+    if (!url.startsWith("https://discord.com/api/v10/")) {
+      throw new Error("Unexpected non-Discord request");
+    }
+    if (url.includes("/webhooks/")) return new Response(null, { status: 204 });
+    if (init?.method === "GET" && url.endsWith("/messages/board-id")) {
+      return Response.json({ id: "board-id", ...boardMessage });
+    }
+    if (init?.method === "PATCH" && url.endsWith("/messages/board-id")) {
+      updatedBoard = JSON.parse(String(init.body)) as Record<string, unknown>;
+      boardMessage = updatedBoard;
+      return Response.json({ id: "board-id", ...updatedBoard });
+    }
+    if (init?.method === "POST" && url.endsWith("/channels/channel-id/messages")) {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      if (typeof body.content === "string" && body.content.startsWith("**Playing:")) {
+        boardMessage = body;
+        return Response.json({ id: "board-id" });
+      }
+      notification = body;
+      return Response.json({ id: "notification-id" });
+    }
+    throw new Error(`Unexpected Discord request: ${init?.method} ${url}`);
+  };
+
+  async function run(
+    interaction: Record<string, unknown>,
+  ): Promise<{ callback: unknown; tasks: Promise<unknown>[] }> {
+    const tasks: Promise<unknown>[] = [];
+    const response = await handleDiscordRequest(
+      signedRequest(Buffer.from(JSON.stringify(interaction))),
+      (task) => tasks.push(task),
+    );
+    const callback = await response.json();
+    await Promise.all(tasks);
+    return { callback, tasks };
+  }
+
+  try {
+    const setup = await run({
+      id: "nodb-command",
+      type: 2,
+      application_id: "test-application",
+      token: "interaction-token",
+      guild_id: "guild-id",
+      channel_id: "channel-id",
+      member: { user: { id: "creator-id" } },
+      data: {
+        name: "pbem-nodb",
+        options: [
+          { name: "name", value: "No DB Game" },
+          { name: "mode", value: "both" },
+        ],
+      },
+    });
+    assert.deepEqual(setup.callback, { type: 5, data: { flags: 64 } });
+
+    const selected = await run({
+      id: "nodb-select",
+      type: 3,
+      token: "interaction-token",
+      guild_id: "guild-id",
+      channel_id: "channel-id",
+      member: { user: { id: "creator-id" } },
+      data: {
+        component_type: 5,
+        custom_id: "pbem:nodb:select:both",
+        values: ["user-1", "user-2"],
+        resolved: {
+          users: {
+            "user-1": { id: "user-1", username: "Player 1" },
+            "user-2": { id: "user-2", username: "Player 2" },
+          },
+        },
+      },
+      message: { embeds: [{ title: "No DB Game" }] },
+    });
+    assert.deepEqual(selected.callback, { type: 6 });
+    assert.match(String(boardMessage?.content), /only saved copy/);
+
+    const components = boardMessage?.components as Array<{
+      components: Array<{ custom_id: string }>;
+    }>;
+    const playerButton = components[0]!.components[1]!;
+    const clicked = await run({
+      id: "nodb-button",
+      type: 3,
+      token: "interaction-token",
+      guild_id: "guild-id",
+      channel_id: "channel-id",
+      member: { user: { id: "user-2" } },
+      data: { component_type: 2, custom_id: playerButton.custom_id },
+      message: { id: "board-id" },
+    });
+    assert.deepEqual(clicked.callback, { type: 6 });
+    assert.match(String(updatedBoard?.content), /<@user-2>/);
+    assert.deepEqual(notification?.allowed_mentions, { users: ["user-2"] });
+    assert.match(String(notification?.content), /<@user-2>/);
+  } finally {
+    if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = previous.token;
+    if (previous.applicationId === undefined) delete process.env.DISCORD_APPLICATION_ID;
+    else process.env.DISCORD_APPLICATION_ID = previous.applicationId;
+    if (previous.publicKey === undefined) delete process.env.DISCORD_PUBLIC_KEY;
+    else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
+    if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous.databaseUrl;
+    globalThis.fetch = previous.fetch;
+    console.error = previous.consoleError;
   }
 });

@@ -146,6 +146,7 @@ function mapSnapshot(row: GameRow): GameSnapshot {
 }
 
 export function openRepository(databaseUrl: string) {
+  if (!databaseUrl.trim()) throw new Error("DATABASE_URL must be configured for database-backed commands.");
   const sql = neon(databaseUrl);
   async function getRow(gameId: string): Promise<GameRow | undefined> {
     const rows = (await sql`

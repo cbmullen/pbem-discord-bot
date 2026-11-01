@@ -1,4 +1,4 @@
-import { createPublicKey, verify } from "node:crypto";
+import { createPublicKey, randomUUID, verify } from "node:crypto";
 import {
   GameNameInUseError,
   openRepository,
@@ -13,6 +13,12 @@ import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
 import { buildGameStatusEmbed } from "../ui/game-status.js";
+import {
+  buildNoDbGameBoard,
+  readNoDbBoardState,
+  updateNoDbGameBoard,
+} from "../ui/nodb-game-board.js";
+import type { NoDbDiscordMessage } from "../ui/nodb-game-board.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -43,7 +49,10 @@ interface InteractionPayload {
     resolved?: { users?: Record<string, DiscordUser> };
     options?: Array<{ name?: string; value?: string | number; focused?: boolean }>;
   };
-  message?: { id?: string };
+  message?: {
+    id?: string;
+    embeds?: Array<{ title?: string }>;
+  };
 }
 
 interface RuntimeConfig {
@@ -57,10 +66,10 @@ function getConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const botToken = env.DISCORD_BOT_TOKEN?.trim();
   const applicationId = env.DISCORD_APPLICATION_ID?.trim();
   const publicKey = env.DISCORD_PUBLIC_KEY?.trim();
-  const databaseUrl = env.DATABASE_URL?.trim();
-  if (!botToken || !applicationId || !publicKey || !databaseUrl) {
+  const databaseUrl = env.DATABASE_URL?.trim() ?? "";
+  if (!botToken || !applicationId || !publicKey) {
     throw new Error(
-      "DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, DISCORD_PUBLIC_KEY, and DATABASE_URL must be configured.",
+      "DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, and DISCORD_PUBLIC_KEY must be configured.",
     );
   }
   return { botToken, applicationId, publicKey, databaseUrl };
@@ -212,6 +221,119 @@ function interactionUserSelect(
   };
 }
 
+function noDbUserSelect(mode: GameMode, maxPlayers: number): Record<string, unknown> {
+  return {
+    type: 1,
+    components: [
+      {
+        type: 5,
+        custom_id: `pbem:nodb:select:${mode}`,
+        placeholder: "Select players",
+        min_values: 1,
+        max_values: maxPlayers,
+      },
+    ],
+  };
+}
+
+async function prepareNoDbGame(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const name = optionValue(interaction, "name")?.trim();
+  const mode = optionValue(interaction, "mode");
+  if (!name || name.length > 80 || !modeIsValid(mode)) {
+    await editOriginal(interaction, config, {
+      content: "Provide a game name of 1-80 characters and select a valid mode.",
+      components: [],
+    });
+    return;
+  }
+  if (!interaction.guild_id || !interaction.channel_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-nodb` in a server channel.",
+      components: [],
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: `Choose players for **${name.replaceAll("@", "@\u200b")}**. This board is not saved in Neon.`,
+    embeds: [{ title: name }],
+    components: [noDbUserSelect(mode, mode === "both" ? 24 : 25)],
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function finishNoDbGameSetup(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const [prefix, namespace, action, modeValue] =
+    interaction.data?.custom_id?.split(":") ?? [];
+  const name = interaction.message?.embeds?.[0]?.title;
+  if (
+    prefix !== "pbem" ||
+    namespace !== "nodb" ||
+    action !== "select" ||
+    !modeIsValid(modeValue) ||
+    !name ||
+    !interaction.guild_id ||
+    !interaction.channel_id
+  ) {
+    await editOriginal(interaction, config, {
+      content: "This no-database game setup is invalid. Run `/pbem-nodb` again.",
+      components: [],
+      embeds: [],
+    });
+    return;
+  }
+
+  const selected = collectSelectedPlayers(interaction);
+  const maxPlayers = modeValue === "both" ? 24 : 25;
+  if (selected.length === 0 || selected.length > maxPlayers) {
+    await editOriginal(interaction, config, {
+      content: selected.length === 0
+        ? "Select at least one non-bot player, then submit the picker again."
+        : `This game supports up to ${maxPlayers} players. Run \`/pbem-nodb\` again to choose a valid roster.`,
+    });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const creatorId = interactionUserId(interaction);
+  if (!creatorId) throw new Error("No-database game setup is missing its creator.");
+  const gameId = randomUUID();
+  const activeMode = modeValue === "both" ? "consecutive" : modeValue;
+  const snapshot: GameSnapshot = {
+    game: {
+      id: gameId,
+      name,
+      mode: modeValue,
+      activeMode,
+      reminderDays: 0,
+      guildId: interaction.guild_id,
+      channelId: interaction.channel_id,
+      messageId: null,
+      createdBy: creatorId,
+      createdAt: now,
+      status: "active",
+    },
+    players: createInitialPlayers(selected, activeMode, now),
+  };
+  await postChannelMessage(
+    interaction.channel_id,
+    config.botToken,
+    buildNoDbGameBoard(snapshot, true),
+  );
+  await editOriginal(interaction, config, {
+    content: `Created **${name.replaceAll("@", "@\u200b")}** without using Neon. The Discord board is the only saved copy.`,
+    components: [],
+    embeds: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 function gameDeletionConfirmation(gameId: string): Record<string, unknown> {
   return {
     components: [
@@ -301,6 +423,42 @@ async function postChannelMessage(
     token,
     { method: "POST", body: JSON.stringify(payload) },
   )) as { id: string };
+}
+
+function isNoDbDiscordMessage(value: unknown): value is NoDbDiscordMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as { content?: unknown; components?: unknown };
+  return (
+    typeof message.content === "string" &&
+    Array.isArray(message.components) &&
+    message.components.every((row) =>
+      !!row &&
+      typeof row === "object" &&
+      typeof row.type === "number" &&
+      (row.components === undefined ||
+        Array.isArray(row.components) &&
+          row.components.every((component: unknown) =>
+            !!component && typeof component === "object" &&
+            typeof (component as { type?: unknown }).type === "number",
+          )),
+    )
+  );
+}
+
+async function getNoDbBoardMessage(
+  channelId: string,
+  messageId: string,
+  token: string,
+): Promise<NoDbDiscordMessage> {
+  const message = await discordRequest(
+    `/channels/${channelId}/messages/${messageId}`,
+    token,
+    { method: "GET" },
+  );
+  if (!isNoDbDiscordMessage(message)) {
+    throw new Error("Discord returned an invalid no-database game board.");
+  }
+  return message;
 }
 
 async function deleteChannelMessage(
@@ -513,6 +671,62 @@ async function setupGameFromUserPicker(
       content: "The game could not be completed. Please run `/pbem` again.",
       components: [],
     });
+  }
+}
+
+async function processNoDbBoardButton(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const messageId = interaction.message?.id;
+  const channelId = interaction.channel_id;
+  const customId = interaction.data?.custom_id;
+  if (!messageId || !channelId || !interaction.guild_id || !interactionUserId(interaction) || !customId) {
+    throw new Error("No-database board interaction is missing game context.");
+  }
+
+  const message = await getNoDbBoardMessage(channelId, messageId, config.botToken);
+  const state = readNoDbBoardState(message);
+  if (!message.components.some((row) =>
+    row.components?.some((button) => button.custom_id === customId),
+  )) {
+    await postEphemeralFollowup(
+      interaction,
+      config,
+      "That no-database board has changed. Please click a current button.",
+    );
+    return;
+  }
+
+  const updated = updateNoDbGameBoard(message, customId);
+  // shortcut: Discord cannot conditionally edit a message; simultaneous clicks can race while this board has no shared lock.
+  await discordRequest(
+    `/channels/${channelId}/messages/${messageId}`,
+    config.botToken,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        content: updated.content,
+        components: updated.components,
+        allowed_mentions: { parse: [] },
+      }),
+    },
+  );
+  if (updated.newlyPending.length === 0) return;
+
+  try {
+    const verb = updated.newlyPending.length === 1 ? "is" : "are";
+    await postChannelMessage(channelId, config.botToken, {
+      content: `Turn update: ${updated.newlyPending.map((userId) => `<@${userId}>`).join(", ")} ${verb} now pending.`,
+      allowed_mentions: { users: updated.newlyPending },
+    });
+  } catch (error) {
+    console.error("Could not notify pending players on a no-database game:", error);
+    await postEphemeralFollowup(
+      interaction,
+      config,
+      "The board was updated, but Discord could not send the pending-player notification.",
+    );
   }
 }
 
@@ -1255,6 +1469,22 @@ async function processClaimedInteraction(
 ): Promise<void> {
   const interactionId = interaction.id;
   if (!interactionId) throw new Error("Interaction ID is missing.");
+
+  if (interaction.type === 2 && interaction.data?.name === "pbem-nodb") {
+    await prepareNoDbGame(interaction, config);
+    return;
+  }
+  if (interaction.type === 3 && interaction.data?.custom_id?.startsWith("pbem:nodb:")) {
+    const action = interaction.data.custom_id.split(":")[2];
+    if (action === "select") {
+      await finishNoDbGameSetup(interaction, config);
+    } else if (action === "player" || action === "mode") {
+      await processNoDbBoardButton(interaction, config);
+    } else {
+      throw new Error("Unsupported no-database board interaction.");
+    }
+    return;
+  }
 
   const claimed = await openRepository(config.databaseUrl).claimInteraction(interactionId);
   if (!claimed) {
