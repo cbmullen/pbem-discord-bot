@@ -463,11 +463,12 @@ local test is finished.
 ## Commands and turn behavior
 
 - `/pbem-nodb name mode` creates a separate board without connecting to Neon.
-  Player status and turn-mode changes are stored only in the Discord board, and
-  newly pending players are mentioned in the channel. The game is lost if the
-  board message is deleted; list, status, away, and reminder commands do not
-  manage these games. Unlike database-backed boards, very closely timed clicks
-  can race because Discord does not offer conditional message edits.
+  Player status and turn-mode changes are stored only in the Discord board.
+  When a button is clicked, the updated board is reposted as the latest channel
+  message and the previous board is removed. The game is lost if the board
+  message is deleted; list, status, away, and reminder commands do not manage
+  these games. Unlike database-backed boards, very closely timed clicks can
+  race because Discord does not offer conditional message edits.
 - `/pbem name mode` creates a game in the current channel and presents a private
   Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game.
   Optionally set `reminder-days` (0–365) to privately DM pending players once

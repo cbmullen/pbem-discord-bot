@@ -178,8 +178,8 @@ test("/pbem-nodb creates and updates a board without making a database request",
   delete process.env.DATABASE_URL;
   console.error = () => {};
   let boardMessage: Record<string, unknown> | undefined;
-  let updatedBoard: Record<string, unknown> | undefined;
-  let notification: Record<string, unknown> | undefined;
+  const postedBoards: Record<string, unknown>[] = [];
+  const messageOperations: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = input instanceof Request
       ? input.url
@@ -193,19 +193,20 @@ test("/pbem-nodb creates and updates a board without making a database request",
     if (init?.method === "GET" && url.endsWith("/messages/board-id")) {
       return Response.json({ id: "board-id", ...boardMessage });
     }
-    if (init?.method === "PATCH" && url.endsWith("/messages/board-id")) {
-      updatedBoard = JSON.parse(String(init.body)) as Record<string, unknown>;
-      boardMessage = updatedBoard;
-      return Response.json({ id: "board-id", ...updatedBoard });
+    if (init?.method === "DELETE" && url.endsWith("/messages/board-id")) {
+      messageOperations.push("delete-old");
+      return new Response(null, { status: 204 });
     }
     if (init?.method === "POST" && url.endsWith("/channels/channel-id/messages")) {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       if (typeof body.content === "string" && body.content.startsWith("**Playing:")) {
-        boardMessage = body;
-        return Response.json({ id: "board-id" });
+        postedBoards.push(body);
+        messageOperations.push("post-board");
+        const id = postedBoards.length === 1 ? "board-id" : "updated-board-id";
+        boardMessage = { id, ...body };
+        return Response.json({ id });
       }
-      notification = body;
-      return Response.json({ id: "notification-id" });
+      throw new Error("A button click should not post a separate turn update");
     }
     throw new Error(`Unexpected Discord request: ${init?.method} ${url}`);
   };
@@ -280,9 +281,11 @@ test("/pbem-nodb creates and updates a board without making a database request",
       message: { id: "board-id" },
     });
     assert.deepEqual(clicked.callback, { type: 6 });
-    assert.match(String(updatedBoard?.content), /<@user-2>/);
-    assert.deepEqual(notification?.allowed_mentions, { users: ["user-2"] });
-    assert.match(String(notification?.content), /<@user-2>/);
+    assert.equal(postedBoards.length, 2);
+    assert.match(String(postedBoards[1]?.content), /<@user-2>/);
+    assert.deepEqual(postedBoards[1]?.allowed_mentions, { parse: [] });
+    assert.deepEqual(messageOperations, ["post-board", "post-board", "delete-old"]);
+    assert.equal(boardMessage?.id, "updated-board-id");
   } finally {
     if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = previous.token;

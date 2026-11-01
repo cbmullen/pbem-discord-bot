@@ -28,7 +28,6 @@ export interface NoDbBoardState {
 export interface NoDbBoardUpdate {
   content: string;
   components: NoDbDiscordMessage["components"];
-  newlyPending: string[];
 }
 
 const NO_DB_NOTICE = "_No database: this board is the only saved copy._";
@@ -228,19 +227,13 @@ export function updateNoDbGameBoard(
       return button;
     }),
   }));
-  const pending = transition.state.players
-    .filter((player) => player.status === "pending")
-    .map((player) => player.userId);
-  const wasPending = new Set(
-    state.players.filter((player) => player.status === "pending").map((player) => player.userId),
-  );
-  const pendingLine = `Pending: ${pending.map((userId) => `<@${userId}>`).join(", ") || "nobody"}`;
+  const pending = transition.state.players.filter((player) => player.status === "pending");
+  const pendingLine = `Pending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`;
   const pendingIndex = message.content.lastIndexOf("\nPending:");
   if (pendingIndex < 0) throw new Error("The no-database board has no pending-player summary.");
 
   return {
     content: `${message.content.slice(0, pendingIndex)}\n${pendingLine}`,
     components,
-    newlyPending: pending.filter((userId) => !wasPending.has(userId)),
   };
 }

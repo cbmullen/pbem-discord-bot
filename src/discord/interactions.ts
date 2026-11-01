@@ -700,33 +700,19 @@ async function processNoDbBoardButton(
 
   const updated = updateNoDbGameBoard(message, customId);
   // shortcut: Discord cannot conditionally edit a message; simultaneous clicks can race while this board has no shared lock.
-  await discordRequest(
-    `/channels/${channelId}/messages/${messageId}`,
+  await postChannelMessage(
+    channelId,
     config.botToken,
     {
-      method: "PATCH",
-      body: JSON.stringify({
-        content: updated.content,
-        components: updated.components,
-        allowed_mentions: { parse: [] },
-      }),
+      content: updated.content,
+      components: updated.components,
+      allowed_mentions: { parse: [] },
     },
   );
-  if (updated.newlyPending.length === 0) return;
-
   try {
-    const verb = updated.newlyPending.length === 1 ? "is" : "are";
-    await postChannelMessage(channelId, config.botToken, {
-      content: `Turn update: ${updated.newlyPending.map((userId) => `<@${userId}>`).join(", ")} ${verb} now pending.`,
-      allowed_mentions: { users: updated.newlyPending },
-    });
+    await deleteChannelMessage(channelId, messageId, config.botToken);
   } catch (error) {
-    console.error("Could not notify pending players on a no-database game:", error);
-    await postEphemeralFollowup(
-      interaction,
-      config,
-      "The board was updated, but Discord could not send the pending-player notification.",
-    );
+    console.error("Could not remove the previous no-database board message:", error);
   }
 }
 

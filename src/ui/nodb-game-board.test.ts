@@ -44,7 +44,7 @@ function snapshot(mode: GameSnapshot["game"]["mode"] = "both"): GameSnapshot {
   };
 }
 
-test("no-database board keeps status in buttons and announces new pending players", () => {
+test("no-database board keeps status in buttons and updates the pending summary", () => {
   const board = buildNoDbGameBoard(snapshot());
   const state = readNoDbBoardState(board);
   const playerButton = board.components[0]!.components[1]!;
@@ -61,7 +61,7 @@ test("no-database board keeps status in buttons and announces new pending player
   assert.equal(next.activeMode, "consecutive");
   assert.deepEqual(next.players.map((player) => player.status), ["done", "pending"]);
   assert.equal(next.players[1]?.pendingSince, "2026-10-31T12:00:00.000Z");
-  assert.deepEqual(updated.newlyPending, ["user-2"]);
+  assert.match(updated.content, /Pending: <@user-2>/);
   assert.ok(updated.components
     .flatMap((row) => row.components ?? [])
     .every((button) => (button.custom_id?.length ?? 0) <= 100));
@@ -79,7 +79,7 @@ test("no-database mode switching uses the existing turn transition rules", () =>
 
   assert.equal(state.activeMode, "simultaneous");
   assert.deepEqual(state.players.map((player) => player.status), ["pending", "pending"]);
-  assert.deepEqual(updated.newlyPending, ["user-2"]);
+  assert.match(updated.content, /Pending: <@user-1>, <@user-2>/);
 });
 
 test("no-database boards support modes without a mode switch button", () => {
