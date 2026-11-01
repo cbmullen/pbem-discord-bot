@@ -203,6 +203,19 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
       ON pbem_processed_interactions (created_at)
     `;
   },
+  async (sql) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_public_api_rate_limits (
+        client_key text PRIMARY KEY,
+        window_started_at timestamptz NOT NULL,
+        request_count integer NOT NULL CHECK (request_count > 0)
+      )
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS pbem_public_api_rate_limits_window_started_at
+      ON pbem_public_api_rate_limits (window_started_at)
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {

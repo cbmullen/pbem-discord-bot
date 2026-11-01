@@ -25,9 +25,13 @@ export default {
     }
 
     try {
-      const removed = await openRepository(databaseUrl).sweepExpiredInteractions();
-      console.log(`Removed ${removed} expired Discord interaction record(s).`);
-      return Response.json({ removed });
+      const repository = openRepository(databaseUrl);
+      const removedInteractions = await repository.sweepExpiredInteractions();
+      const removedRateLimits = await repository.sweepExpiredPublicApiRateLimits();
+      console.log(
+        `Removed ${removedInteractions} expired Discord interaction record(s) and ${removedRateLimits} public API rate-limit record(s).`,
+      );
+      return Response.json({ removedInteractions, removedRateLimits });
     } catch (error) {
       console.error("Could not remove expired Discord interaction records:", error);
       return Response.json({ error: "Cleanup failed" }, { status: 500 });

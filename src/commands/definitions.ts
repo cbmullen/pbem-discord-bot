@@ -313,6 +313,8 @@ export const commands = [
           { name: "/pbem-notify", value: "pbem-notify" },
           { name: "/pbem-list", value: "pbem-list" },
           { name: "/pbem-delete-all", value: "pbem-delete-all" },
+          { name: "/pbem-delete-archive", value: "pbem-delete-archive" },
+          { name: "/pbem-delete-all-archives", value: "pbem-delete-all-archives" },
           { name: "/pbem-help", value: "pbem-help" },
         ],
       },
@@ -321,5 +323,24 @@ export const commands = [
   {
     name: "pbem-delete-all",
     description: "Delete all PBEM games in this server",
+  },
+  {
+    name: "pbem-delete-archive",
+    description: "Delete one completed game archive and update its statistics",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose a completed game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
+    name: "pbem-delete-all-archives",
+    description: "Delete all completed game archives in this server",
   },
 ];

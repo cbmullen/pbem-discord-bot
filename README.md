@@ -265,7 +265,9 @@ The same deployment also exposes:
   and average game length. It
   does not return Discord IDs, server/channel IDs, creator IDs, or the interaction
   token. This endpoint intentionally allows cross-origin requests for the public
-  notebook page. Anyone can view the returned status data.
+  notebook page. Successful status responses are cached for 60 seconds and
+  uncached requests are limited to 60 per client per minute. Discord button
+  updates are not cached. Anyone can view the returned status data.
 - `GET /api/health` — checks that the function can connect to Neon and returns
   only `healthy` or `unhealthy`. It also supports CORS for the status badge.
 
@@ -349,8 +351,8 @@ definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
 `/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-rematch`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-notify`,
-`/pbem-delete`, `/pbem-list`, `/pbem-help`, `/pbem-delete-all`, `/pbem-away`, and
-`/pbem-back` are listed.
+`/pbem-delete`, `/pbem-list`, `/pbem-help`, `/pbem-delete-all`, `/pbem-away`,
+`/pbem-back`, `/pbem-delete-archive`, and `/pbem-delete-all-archives` are listed.
 
 ## 6. Verify the bot
 
@@ -572,6 +574,11 @@ setting notifications, handling away status, and using every command, see the
 - `/pbem-delete-all` shows a confirmation before permanently deleting every
   game record in the current server, including pending setups. Any server
   member can confirm; the bot also attempts to remove each existing board.
+- `/pbem-delete-archive game` offers completed games in the server. After
+  confirmation, it deletes one archived game and recalculates lifetime stats.
+- `/pbem-delete-all-archives` asks for confirmation before deleting all
+  completed games archived for this server and recalculating lifetime stats.
+  Any server member can confirm either archive deletion.
 - Automated reminders are checked daily at 09:00 UTC. Each player receives at
   most one scheduled notification per pending turn after the game's configured
   day threshold, using their saved DM, channel-ping, or none preference. DM

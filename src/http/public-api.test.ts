@@ -18,6 +18,16 @@ test("public API responses allow anonymous cross-origin reads without credential
   assert.deepEqual(await response.json(), { status: "healthy" });
 });
 
+test("public API responses can override caching headers without losing CORS", () => {
+  const response = publicJsonResponse(
+    { status: "healthy" },
+    200,
+    { "Cache-Control": "public, s-maxage=60" },
+  );
+  assert.equal(response.headers.get("Cache-Control"), "public, s-maxage=60");
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
+});
+
 test("public API preflight requests are accepted", () => {
   const response = publicOptionsResponse();
   assert.equal(response.status, 204);

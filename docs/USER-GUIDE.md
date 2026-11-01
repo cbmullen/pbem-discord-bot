@@ -271,6 +271,14 @@ record in this server, including incomplete player-selection setups, and
 attempts to remove their boards. This does not delete already archived games.
 Any server member can confirm. This action cannot be undone.
 
+### `/pbem-delete-archive game` and `/pbem-delete-all-archives`
+
+`/pbem-delete-archive` offers completed games in this server. Select one and
+confirm to permanently remove its archive and update lifetime statistics.
+`/pbem-delete-all-archives` confirms before permanently removing every archived
+game in this server. Any server member can confirm either action. These commands
+cannot be undone; active games are not affected.
+
 ## Quick reference
 
 | What you want to do | Command |
@@ -288,3 +296,4 @@ Any server member can confirm. This action cannot be undone.
 | Mark a player away or back | `/pbem-away`, `/pbem-back`, or the board's grey back button |
 | Record a winner and archive a game | `/pbem-gameover` |
 | Delete one game or all server games | `/pbem-delete`, `/pbem-delete-all` |
+| Delete one or all archived games | `/pbem-delete-archive`, `/pbem-delete-all-archives` |

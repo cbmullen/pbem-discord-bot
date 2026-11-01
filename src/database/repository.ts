@@ -104,6 +104,7 @@ export interface PublicGameStatus {
 
 // shortcut: latest 100 archives, add pagination if older games need browsing.
 const PUBLIC_ARCHIVE_HISTORY_LIMIT = 100;
+const PUBLIC_ARCHIVE_LOCK_ID = 731492018;
 
 export interface PublicArchiveStatistics {
   playerStats: Array<{
@@ -308,6 +309,50 @@ export function openRepository(databaseUrl: string) {
         RETURNING interaction_id
       `) as Array<{ interaction_id: string }>;
       return rows.length;
+    },
+
+    async sweepExpiredPublicApiRateLimits(): Promise<number> {
+      const rows = (await sql`
+        DELETE FROM pbem_public_api_rate_limits
+        WHERE window_started_at < NOW() - INTERVAL '1 day'
+        RETURNING client_key
+      `) as Array<{ client_key: string }>;
+      return rows.length;
+    },
+
+    async checkPublicApiRateLimit(
+      clientKey: string,
+      limit: number,
+    ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+      const rows = (await sql`
+        INSERT INTO pbem_public_api_rate_limits (
+          client_key, window_started_at, request_count
+        ) VALUES (${clientKey}, NOW(), 1)
+        ON CONFLICT (client_key) DO UPDATE
+        SET window_started_at = CASE
+              WHEN pbem_public_api_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute'
+              THEN NOW()
+              ELSE pbem_public_api_rate_limits.window_started_at
+            END,
+            request_count = CASE
+              WHEN pbem_public_api_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute'
+              THEN 1
+              ELSE pbem_public_api_rate_limits.request_count + 1
+            END
+        RETURNING request_count,
+          GREATEST(
+            1,
+            CEIL(EXTRACT(EPOCH FROM (
+              window_started_at + INTERVAL '1 minute' - NOW()
+            )))
+          )::integer AS retry_after_seconds
+      `) as Array<{ request_count: number; retry_after_seconds: number }>;
+      const row = rows[0];
+      if (!row) throw new Error("Could not record public API rate limit.");
+      return {
+        allowed: row.request_count <= limit,
+        retryAfterSeconds: row.retry_after_seconds,
+      };
     },
 
     async createDraft(input: NewGame, now = new Date().toISOString()) {
@@ -602,6 +647,138 @@ export function openRepository(databaseUrl: string) {
       }));
     },
 
+    async listArchivedGamesInGuild(
+      guildId: string,
+      query = "",
+    ): Promise<Array<{ gameId: string; name: string }>> {
+      const escapedQuery = query.replace(/[\\%_]/g, "\\$&");
+      const rows = (await sql`
+        SELECT game_id, name
+        FROM pbem_game_archive
+        WHERE guild_id = ${guildId}
+          AND lower(name) LIKE lower(${`%${escapedQuery}%`})
+        ORDER BY completed_at DESC, game_id DESC
+        LIMIT 25
+      `) as Array<{ game_id: string; name: string }>;
+      return rows.map(({ game_id, name }) => ({ gameId: game_id, name }));
+    },
+
+    async countArchivedGamesInGuild(guildId: string): Promise<number> {
+      const rows = (await sql`
+        SELECT COUNT(*)::integer AS count
+        FROM pbem_game_archive
+        WHERE guild_id = ${guildId}
+      `) as Array<{ count: number }>;
+      return rows[0]?.count ?? 0;
+    },
+
+    async getArchivedGameNameInGuild(
+      guildId: string,
+      gameId: string,
+    ): Promise<string | null> {
+      const rows = (await sql`
+        SELECT name
+        FROM pbem_game_archive
+        WHERE guild_id = ${guildId} AND game_id = ${gameId}
+        LIMIT 1
+      `) as Array<{ name: string }>;
+      return rows[0]?.name ?? null;
+    },
+
+    async deleteArchivedGamesInGuild(
+      guildId: string,
+      gameId: string | null = null,
+    ): Promise<number> {
+      const rows = (await sql`
+        WITH archive_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(${PUBLIC_ARCHIVE_LOCK_ID}::bigint)
+        ), deleted_archives AS (
+          DELETE FROM pbem_game_archive
+          WHERE guild_id = ${guildId}
+            AND (${gameId}::uuid IS NULL OR game_id = ${gameId}::uuid)
+            AND EXISTS (SELECT 1 FROM archive_lock)
+          RETURNING game_id
+        ), remaining_archives AS (
+          SELECT archive.*
+          FROM pbem_game_archive AS archive
+          WHERE NOT EXISTS (
+            SELECT 1 FROM deleted_archives AS deleted
+            WHERE deleted.game_id = archive.game_id
+          )
+        ), player_rows AS (
+          SELECT
+            member.user_id,
+            COALESCE(
+              player.value->'notificationUsernames'->>((member.ordinality - 1)::int),
+              player.value->>'username'
+            ) AS username,
+            archive.completed_at,
+            archive.game_id,
+            player.value->>'userId' = archive.winner_user_id AS won,
+            COALESCE((player.value->>'completedTurns')::bigint, 0) AS completed_turns,
+            COALESCE((player.value->>'totalTurnDurationMs')::float8, 0) AS total_turn_duration_ms
+          FROM remaining_archives AS archive
+          CROSS JOIN LATERAL jsonb_array_elements(archive.players) AS player(value)
+          CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE
+              WHEN jsonb_typeof(player.value->'notificationUserIds') = 'array'
+                AND jsonb_array_length(player.value->'notificationUserIds') > 0
+              THEN player.value->'notificationUserIds'
+              ELSE jsonb_build_array(player.value->>'userId')
+            END
+          ) WITH ORDINALITY AS member(user_id, ordinality)
+        ), player_totals AS (
+          SELECT
+            user_id,
+            (ARRAY_AGG(username ORDER BY completed_at DESC, game_id DESC))[1] AS username,
+            (ARRAY_AGG(completed_at ORDER BY completed_at DESC, game_id DESC))[1] AS username_completed_at,
+            (ARRAY_AGG(game_id ORDER BY completed_at DESC, game_id DESC))[1] AS username_game_id,
+            COUNT(*) AS games_played,
+            COUNT(*) FILTER (WHERE won) AS wins,
+            SUM(completed_turns) AS completed_turns,
+            SUM(total_turn_duration_ms) AS total_turn_duration_ms
+          FROM player_rows
+          GROUP BY user_id
+        ), updated_totals AS (
+          UPDATE pbem_public_archive_totals
+          SET completed_games = (
+                SELECT COUNT(*)::bigint FROM remaining_archives
+              ),
+              total_game_duration_ms = COALESCE((
+                SELECT SUM(GREATEST(
+                  0,
+                  EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
+                ))
+                FROM remaining_archives
+              ), 0)
+          WHERE id = true
+          RETURNING id
+        ), updated_player_stats AS (
+          UPDATE pbem_public_archive_player_stats AS stats
+          SET username = totals.username,
+              username_completed_at = totals.username_completed_at,
+              username_game_id = totals.username_game_id,
+              games_played = totals.games_played,
+              wins = totals.wins,
+              completed_turns = totals.completed_turns,
+              total_turn_duration_ms = totals.total_turn_duration_ms
+          FROM player_totals AS totals
+          WHERE stats.user_id = totals.user_id
+          RETURNING stats.user_id
+        ), deleted_player_stats AS (
+          DELETE FROM pbem_public_archive_player_stats AS stats
+          WHERE NOT EXISTS (
+            SELECT 1 FROM player_totals AS totals
+            WHERE totals.user_id = stats.user_id
+          )
+          RETURNING stats.user_id
+        )
+        SELECT COUNT(*)::integer AS deleted_count
+        FROM deleted_archives
+      `) as Array<{ deleted_count: number }>;
+      return rows[0]?.deleted_count ?? 0;
+    },
+
     async getPublicArchiveStatistics(): Promise<PublicArchiveStatistics> {
       const [totalsRows, playerRows] = await Promise.all([
         sql`
@@ -889,12 +1066,15 @@ export function openRepository(databaseUrl: string) {
       completedAt = new Date().toISOString(),
     ): Promise<ArchivedGame | null> {
       const rows = (await sql`
-        WITH finished AS (
+        WITH archive_lock AS MATERIALIZED (
+          SELECT pg_advisory_xact_lock(${PUBLIC_ARCHIVE_LOCK_ID}::bigint)
+        ), finished AS (
           DELETE FROM pbem_games
           WHERE id = ${gameId}
             AND guild_id = ${guildId}
             AND status = 'active'
             AND players @> ${JSON.stringify([{ userId: winnerUserId }])}::jsonb
+            AND EXISTS (SELECT 1 FROM archive_lock)
           RETURNING *
         ), archived AS (
           INSERT INTO pbem_game_archive (

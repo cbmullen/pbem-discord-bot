@@ -39,6 +39,8 @@ const COMMAND_HELP: Record<string, string> = {
   "pbem-remind": "`/pbem-remind game` immediately pings pending players in the game's channel. It ignores reminder thresholds and notification preferences, but is unavailable while the game is paused by an away player.",
   "pbem-reminders": "`/pbem-reminders game days` sets the scheduled reminder threshold from 0 to 365 days. Set 0 to disable; reminders are checked daily at 09:00 UTC.",
   "pbem-delete": "`/pbem-delete game` asks for confirmation, then permanently deletes the active game and attempts to remove its board.",
+  "pbem-delete-archive": "`/pbem-delete-archive game` asks for confirmation, then permanently removes one completed game and recalculates archive statistics.",
+  "pbem-delete-all-archives": "`/pbem-delete-all-archives` asks for confirmation, then permanently removes every completed game in this server and recalculates archive statistics.",
   "pbem-status": "`/pbem-status game` privately shows the active game's roster, turn mode, pending statuses, start time, reminder setting, and away status.",
   "pbem-away": "`/pbem-away [player] [until]` marks you or another member away across their active games. `until` is an optional YYYY-MM-DD return date in UTC; any away player pauses reminders for their games.",
   "pbem-back": "`/pbem-back [player]` clears your or another member's away status across the server. Any player can also use the grey board button; turn status is unchanged.",
@@ -618,6 +620,54 @@ function deleteAllConfirmation(): Record<string, unknown> {
   };
 }
 
+function archivedGameDeletionConfirmation(gameId: string): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 4,
+            label: "Delete archived game",
+            custom_id: `pbem:archive-delete-confirm:${gameId}`,
+          },
+          {
+            type: 2,
+            style: 2,
+            label: "Cancel",
+            custom_id: `pbem:archive-delete-cancel:${gameId}`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function deleteAllArchivesConfirmation(): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 4,
+            label: "Delete all archives",
+            custom_id: "pbem:archive-delete-all-confirm",
+          },
+          {
+            type: 2,
+            style: 2,
+            label: "Cancel",
+            custom_id: "pbem:archive-delete-all-cancel",
+          },
+        ],
+      },
+    ],
+  };
+}
+
 export function splitMessage(content: string, maxLength = 1900): string[] {
   if (maxLength < 1) throw new Error("Message length limit must be positive.");
   const chunks: string[] = [];
@@ -647,6 +697,17 @@ export function activeGameChoices(
     .filter((game) => game.name.toLocaleLowerCase().includes(normalizedQuery))
     .slice(0, 25)
     .map((game) => ({ name: game.name, value: game.name }));
+}
+
+export function archivedGameChoices(
+  games: Array<{ gameId: string; name: string }>,
+  query: string,
+): Array<{ name: string; value: string }> {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return games
+    .filter((game) => game.name.toLocaleLowerCase().includes(normalizedQuery))
+    .slice(0, 25)
+    .map((game) => ({ name: game.name, value: game.gameId }));
 }
 
 async function postChannelMessage(
@@ -1756,6 +1817,17 @@ async function autocompleteActiveGame(
 ): Promise<Response> {
   const focusedOption = interaction.data?.options?.find((option) => option.focused);
   if (
+    interaction.data?.name === "pbem-delete-archive" &&
+    focusedOption?.name === "game" &&
+    interaction.guild_id
+  ) {
+    const query = typeof focusedOption.value === "string" ? focusedOption.value : "";
+    const archives = await openRepository(config.databaseUrl)
+      .listArchivedGamesInGuild(interaction.guild_id, query);
+    return immediateResponse(8, { choices: archivedGameChoices(archives, query) });
+  }
+
+  if (
     ![
       "pbem-delete",
       "pbem-reminders",
@@ -2026,6 +2098,85 @@ async function processDeleteAllGames(
       : `Deleted ${games.length} PBEM game${games.length === 1 ? "" : "s"} and freed their names, but could not remove ${failedBoards} board message${failedBoards === 1 ? "" : "s"}. Check the bot's channel permissions.`;
   await editOriginal(interaction, config, {
     content: message,
+    components: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function prepareArchivedGameDeletion(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  if (!guildId) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-delete-archive` in a server.",
+    });
+    return;
+  }
+  const gameName = await openRepository(config.databaseUrl)
+    .getArchivedGameNameInGuild(guildId, gameId);
+  if (!gameName) {
+    await editOriginal(interaction, config, {
+      content: "That archived game is not available in this server.",
+      components: [],
+    });
+    return;
+  }
+  await editOriginal(interaction, config, {
+    content: `Permanently delete the archived game **${gameName.replaceAll("@", "@\u200b")}**? Its contribution to archive statistics will also be removed. This cannot be undone.`,
+    ...archivedGameDeletionConfirmation(gameId),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function prepareDeleteAllArchives(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  if (!guildId) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-delete-all-archives` in a server.",
+    });
+    return;
+  }
+  const archiveCount = await openRepository(config.databaseUrl)
+    .countArchivedGamesInGuild(guildId);
+  if (archiveCount === 0) {
+    await editOriginal(interaction, config, {
+      content: "There are no archived games to delete in this server.",
+      components: [],
+    });
+    return;
+  }
+  await editOriginal(interaction, config, {
+    content: `Permanently delete all ${archiveCount} archived game${archiveCount === 1 ? "" : "s"} in this server? Their contributions to archive statistics will also be removed. This cannot be undone.`,
+    ...deleteAllArchivesConfirmation(),
+  });
+}
+
+async function deleteArchivedGames(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string | null,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  if (!guildId || !interactionUserId(interaction)) {
+    throw new Error("Archive deletion is missing server or user context.");
+  }
+  const deleted = await openRepository(config.databaseUrl)
+    .deleteArchivedGamesInGuild(guildId, gameId);
+  const content = gameId
+    ? deleted > 0
+      ? "The archived game and its statistics were deleted."
+      : "That archived game is no longer available in this server."
+    : deleted > 0
+      ? `Deleted ${deleted} archived game${deleted === 1 ? "" : "s"} and updated the statistics.`
+      : "There are no archived games left to delete in this server.";
+  await editOriginal(interaction, config, {
+    content,
     components: [],
     allowed_mentions: { parse: [] },
   });
@@ -2313,6 +2464,33 @@ async function handleInteraction(
       const task = prepareDeleteAllGames(interaction, config);
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
+
+    if (commandName === "pbem-delete-archive") {
+      const gameId = optionValue(interaction, "game")?.trim();
+      if (
+        !gameId ||
+        !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(gameId) ||
+        !interaction.guild_id
+      ) {
+        return immediateResponse(4, {
+          content: "Choose an archived game in this server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareArchivedGameDeletion(interaction, config, gameId);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
+    if (commandName === "pbem-delete-all-archives") {
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-delete-all-archives` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareDeleteAllArchives(interaction, config);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
   }
 
   if (interaction.type === 4) {
@@ -2365,6 +2543,55 @@ async function handleInteraction(
         content: "Game over cancelled.",
         components: [],
       });
+    }
+    if (customId.startsWith("pbem:archive-delete-cancel:")) {
+      const gameId = customId.slice("pbem:archive-delete-cancel:".length);
+      if (!gameId || interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This archive deletion cancellation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      return immediateResponse(7, {
+        content: "Archive deletion cancelled.",
+        components: [],
+      });
+    }
+    if (customId.startsWith("pbem:archive-delete-confirm:")) {
+      const gameId = customId.slice("pbem:archive-delete-confirm:".length);
+      if (
+        !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(gameId) ||
+        interaction.data?.component_type !== 2
+      ) {
+        return immediateResponse(4, {
+          content: "This archived-game deletion confirmation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = deleteArchivedGames(interaction, config, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
+    if (customId === "pbem:archive-delete-all-cancel") {
+      if (interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This archive deletion cancellation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      return immediateResponse(7, {
+        content: "Archive deletion cancelled.",
+        components: [],
+      });
+    }
+    if (customId === "pbem:archive-delete-all-confirm") {
+      if (interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This archive deletion confirmation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = deleteArchivedGames(interaction, config, null);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
     }
     if (customId.startsWith("pbem:gameover:")) {
       const [, action, gameId] = customId.split(":");
@@ -2534,9 +2761,11 @@ async function processClaimedInteraction(
   });
   const callback = await response.json() as {
     type?: number;
-    data?: { content?: string };
+    data?: Record<string, unknown>;
   };
-  if (callback.type === 4 && callback.data?.content) {
+  if (callback.type === 7 && callback.data) {
+    await editOriginal(interaction, config, callback.data);
+  } else if (callback.type === 4 && typeof callback.data?.content === "string") {
     if (interaction.type === 2) {
       await editOriginal(interaction, config, {
         content: callback.data.content,

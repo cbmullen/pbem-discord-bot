@@ -1,7 +1,9 @@
+import { createHmac } from "node:crypto";
 import {
   getPublicArchiveStatistics,
   listPublicActiveGames,
   listPublicArchivedGames,
+  openRepository,
 } from "../src/database/repository.js";
 import { resolveGuildNames } from "../src/discord/guild-names.js";
 import {
@@ -23,6 +25,24 @@ export default {
     }
 
     try {
+      const clientIp =
+        request.headers.get("x-vercel-forwarded-for")?.trim() ||
+        request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ||
+        "unknown";
+      const clientKey = createHmac("sha256", databaseUrl).update(clientIp).digest("hex");
+      const rateLimit = await openRepository(databaseUrl)
+        .checkPublicApiRateLimit(clientKey, 60);
+      if (!rateLimit.allowed) {
+        return publicJsonResponse(
+          { error: "Too many status requests. Try again shortly." },
+          429,
+          {
+            "Cache-Control": "no-store",
+            "Retry-After": String(rateLimit.retryAfterSeconds),
+          },
+        );
+      }
+
       const [games, archives, statistics] = await Promise.all([
         listPublicActiveGames(databaseUrl),
         listPublicArchivedGames(databaseUrl),
@@ -33,11 +53,15 @@ export default {
         botToken,
       );
       const summary = summarizePublicArchives(archives, guildNames, statistics);
-      return publicJsonResponse({
-        generatedAt: new Date().toISOString(),
-        games: addServerNames(games, guildNames),
-        ...summary,
-      });
+      return publicJsonResponse(
+        {
+          generatedAt: new Date().toISOString(),
+          games: addServerNames(games, guildNames),
+          ...summary,
+        },
+        200,
+        { "Cache-Control": "public, s-maxage=60" },
+      );
     } catch (error) {
       console.error("Could not load public PBEM status:", error);
       return publicJsonResponse({ error: "Status data is unavailable." }, 503);

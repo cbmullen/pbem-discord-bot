@@ -108,12 +108,23 @@ test("/pbem-notify configures a user, delivery mode, and quiet hours", () => {
   );
 });
 
+test("archive deletion commands are server-scoped and the single-game command autocompletes", () => {
+  const one = commands.find((entry) => entry.name === "pbem-delete-archive");
+  const all = commands.find((entry) => entry.name === "pbem-delete-all-archives");
+  assert.ok(one && all);
+  assert.deepEqual(
+    optionsOf(one).map((option) => [option.name, option.type, option.required, option.autocomplete]),
+    [["game", 3, true, true]],
+  );
+  assert.equal(optionsOf(all).length, 0);
+});
+
 test("/pbem-help has an optional command choice", () => {
   const command = commands.find((entry) => entry.name === "pbem-help");
   assert.ok(command);
   const [option] = optionsOf(command);
   assert.ok(option);
   assert.deepEqual([option.name, option.type, option.required], ["command", 3, false]);
-  assert.equal(option.choices?.length, 16);
+  assert.equal(option.choices?.length, 18);
   assert.ok(option.choices?.some(({ value }) => value === "pbem-help"));
 });

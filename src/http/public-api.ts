@@ -9,8 +9,14 @@ const CORS_HEADERS = {
 export function publicJsonResponse(
   payload: unknown,
   status = 200,
+  additionalHeaders: HeadersInit = {},
 ): Response {
-  return Response.json(payload, { status, headers: CORS_HEADERS });
+  const headers = new Headers(CORS_HEADERS);
+  new Headers(additionalHeaders).forEach((value, key) => headers.set(key, value));
+  return Response.json(payload, {
+    status,
+    headers,
+  });
 }
 
 export function publicOptionsResponse(): Response {

@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
   activeGameChoices,
+  archivedGameChoices,
   commandHelpContent,
   handleDiscordRequest,
   pendingUserIds,
@@ -40,6 +41,21 @@ test("active game autocomplete filters games and caps choices at 25", () => {
   assert.equal(activeGameChoices(games, "").length, 25);
 });
 
+test("archived game autocomplete returns game IDs and caps choices at 25", () => {
+  const games = Array.from({ length: 30 }, (_, index) => ({
+    gameId: `game-id-${index + 1}`,
+    name: `Game ${index + 1}`,
+  }));
+  assert.deepEqual(archivedGameChoices(games, " GAME 2 "), [
+    { name: "Game 2", value: "game-id-2" },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      name: `Game ${index + 20}`,
+      value: `game-id-${index + 20}`,
+    })),
+  ]);
+  assert.equal(archivedGameChoices(games, "").length, 25);
+});
+
 test("game-list message splitting rejects entries longer than its limit", () => {
   assert.throws(() => splitMessage("12345678", 7), /exceeds the Discord message limit/);
 });
@@ -47,6 +63,8 @@ test("game-list message splitting rejects entries longer than its limit", () => 
 test("/pbem-help gives command-specific help or the full guide link", () => {
   assert.match(commandHelpContent("pbem"), /no native teams/i);
   assert.match(commandHelpContent("pbem"), /use `\/pbem-teams` to add them/);
+  assert.match(commandHelpContent("pbem-delete-archive"), /recalculates archive statistics/);
+  assert.match(commandHelpContent("pbem-delete-all-archives"), /every completed game/);
   assert.match(commandHelpContent("pbem-teams"), /2–8 server members/);
   assert.match(commandHelpContent("pbem-teams"), /user-guide\.html/);
   assert.match(commandHelpContent(), /^\*\*PBEM Discord Bot User Guide\*\*/);
