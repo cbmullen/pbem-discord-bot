@@ -2711,6 +2711,7 @@ function scheduledResponse(
 async function processClaimedInteraction(
   interaction: InteractionPayload,
   config: RuntimeConfig,
+  claimInteraction: (interactionId: string) => Promise<boolean>,
 ): Promise<void> {
   const interactionId = interaction.id;
   if (!interactionId) throw new Error("Interaction ID is missing.");
@@ -2738,7 +2739,7 @@ async function processClaimedInteraction(
     return;
   }
 
-  const claimed = await openRepository(config.databaseUrl).claimInteraction(interactionId);
+  const claimed = await claimInteraction(interactionId);
   if (!claimed) {
     if (interaction.type === 2) {
       await editOriginal(interaction, config, {
@@ -2783,6 +2784,9 @@ export async function handleDiscordRequest(
   schedule: (task: Promise<unknown>) => void = (task) => {
     void task;
   },
+  claimInteraction: (databaseUrl: string, interactionId: string) => Promise<boolean> =
+    (databaseUrl, interactionId) =>
+      openRepository(databaseUrl).claimInteraction(interactionId),
 ): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("Method not allowed", {
@@ -2825,7 +2829,11 @@ export async function handleDiscordRequest(
     return scheduledResponse(
       interaction.type === 2 ? 5 : 6,
       interaction.type === 2 ? { flags: EPHEMERAL } : undefined,
-      processClaimedInteraction(interaction, config),
+      processClaimedInteraction(
+        interaction,
+        config,
+        (interactionId) => claimInteraction(config.databaseUrl, interactionId),
+      ),
       schedule,
       interaction,
       config,

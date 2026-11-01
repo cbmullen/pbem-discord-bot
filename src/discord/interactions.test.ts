@@ -303,6 +303,230 @@ test("invalid Discord signatures are rejected", async () => {
   }
 });
 
+test("all cancel buttons edit the original message without a database", async () => {
+  const previous = {
+    token: process.env.DISCORD_BOT_TOKEN,
+    applicationId: process.env.DISCORD_APPLICATION_ID,
+    publicKey: process.env.DISCORD_PUBLIC_KEY,
+    databaseUrl: process.env.DATABASE_URL,
+    fetch: globalThis.fetch,
+  };
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  process.env.DISCORD_APPLICATION_ID = "test-application";
+  process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
+  process.env.DATABASE_URL = "postgres://test";
+  const edits: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = input instanceof Request
+      ? input.url
+      : input instanceof URL
+        ? input.href
+        : input;
+    if (
+      url !== "https://discord.com/api/v10/webhooks/test-application/interaction-token/messages/@original" ||
+      init?.method !== "PATCH"
+    ) {
+      throw new Error(`Unexpected request: ${init?.method} ${url}`);
+    }
+    edits.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+    return new Response(null, { status: 204 });
+  };
+
+  const cancellations = [
+    ["pbem:delete-cancel:game-id", "Game deletion cancelled."],
+    ["pbem:gameover-cancel:game-id", "Game over cancelled."],
+    ["pbem:delete-all-cancel", "Bulk deletion cancelled."],
+    [`pbem:archive-delete-cancel:${publicKeyHex.slice(0, 8)}-0000-0000-0000-000000000000`, "Archive deletion cancelled."],
+    ["pbem:archive-delete-all-cancel", "Archive deletion cancelled."],
+  ];
+
+  try {
+    for (const [index, [customId, expectedContent]] of cancellations.entries()) {
+      const tasks: Promise<unknown>[] = [];
+      const interaction = {
+        id: `cancel-${index}`,
+        type: 3,
+        application_id: "test-application",
+        token: "interaction-token",
+        guild_id: "guild-id",
+        channel_id: "channel-id",
+        member: { user: { id: "user-id" } },
+        data: { component_type: 2, custom_id: customId },
+      };
+      const response = await handleDiscordRequest(
+        signedRequest(Buffer.from(JSON.stringify(interaction))),
+        (task) => tasks.push(task),
+        async () => true,
+      );
+      assert.deepEqual(await response.json(), { type: 6 });
+      await Promise.all(tasks);
+      assert.deepEqual(edits[index], {
+        content: expectedContent,
+        components: [],
+      });
+    }
+    assert.equal(edits.length, cancellations.length);
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = previous.token;
+    if (previous.applicationId === undefined) delete process.env.DISCORD_APPLICATION_ID;
+    else process.env.DISCORD_APPLICATION_ID = previous.applicationId;
+    if (previous.publicKey === undefined) delete process.env.DISCORD_PUBLIC_KEY;
+    else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
+    if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous.databaseUrl;
+  }
+});
+
+test("invalid slash-command inputs are rejected before starting a command", async () => {
+  const previous = {
+    token: process.env.DISCORD_BOT_TOKEN,
+    applicationId: process.env.DISCORD_APPLICATION_ID,
+    publicKey: process.env.DISCORD_PUBLIC_KEY,
+    databaseUrl: process.env.DATABASE_URL,
+    fetch: globalThis.fetch,
+  };
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  process.env.DISCORD_APPLICATION_ID = "test-application";
+  process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
+  process.env.DATABASE_URL = "postgres://test";
+  const edits: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    if (init?.method !== "PATCH") throw new Error("Expected an interaction edit.");
+    edits.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+    return new Response(null, { status: 204 });
+  };
+
+  const cases: Array<{
+    command: string;
+    options?: Array<{ name: string; value: string | number }>;
+    omitGuild?: boolean;
+    resolvedUsers?: Record<string, { id: string; username: string; bot?: boolean }>;
+    expected: string;
+  }> = [
+    { command: "pbem", expected: "Provide a game name" },
+    {
+      command: "pbem",
+      options: [{ name: "name", value: "Game" }, { name: "mode", value: "invalid" }],
+      expected: "Provide a game name",
+    },
+    {
+      command: "pbem",
+      options: [{ name: "name", value: "Game" }, { name: "mode", value: "both" }],
+      omitGuild: true,
+      expected: "Use `/pbem` in a server channel.",
+    },
+    { command: "pbem-players", expected: "Choose an active game" },
+    {
+      command: "pbem-teams",
+      options: [{ name: "game", value: "Game" }, { name: "action", value: "add" }],
+      omitGuild: true,
+      expected: "Use `/pbem-teams` in a server.",
+    },
+    { command: "pbem-gameover", expected: "Choose an active game" },
+    { command: "pbem-rematch", expected: "Choose an active game" },
+    { command: "pbem-remind", expected: "Choose an active game" },
+    { command: "pbem-reminders", expected: "Choose an active game" },
+    { command: "pbem-notify", omitGuild: true, expected: "Use `/pbem-notify` in a server." },
+    {
+      command: "pbem-notify",
+      options: [{ name: "delivery", value: "invalid" }, { name: "quiet-hours", value: "off" }],
+      expected: "Choose DM, channel ping, or none",
+    },
+    {
+      command: "pbem-notify",
+      options: [
+        { name: "delivery", value: "dm" },
+        { name: "quiet-hours", value: "off" },
+        { name: "user", value: "other-user" },
+      ],
+      expected: "Choose a non-bot server member",
+    },
+    {
+      command: "pbem-notify",
+      options: [{ name: "delivery", value: "dm" }],
+      expected: "Set quiet-hours",
+    },
+    {
+      command: "pbem-notify",
+      options: [
+        { name: "delivery", value: "dm" },
+        { name: "quiet-hours", value: "22:00-07:00" },
+      ],
+      expected: "Use quiet-hours `off`",
+    },
+    {
+      command: "pbem-notify",
+      options: [
+        { name: "delivery", value: "dm" },
+        { name: "quiet-hours", value: "off" },
+        { name: "utc-offset", value: "+01:00" },
+      ],
+      expected: "Omit utc-offset",
+    },
+    { command: "pbem-status", expected: "Choose an active game" },
+    { command: "pbem-delete", expected: "Choose an active game" },
+    { command: "pbem-away", omitGuild: true, expected: "Use `/pbem-away` in a server." },
+    { command: "pbem-back", omitGuild: true, expected: "Use `/pbem-back` in a server." },
+    { command: "pbem-list", omitGuild: true, expected: "Use `/pbem-list` in a server." },
+    { command: "pbem-delete-all", omitGuild: true, expected: "Use `/pbem-delete-all` in a server." },
+    {
+      command: "pbem-delete-archive",
+      options: [{ name: "game", value: "not-a-uuid" }],
+      expected: "Choose an archived game",
+    },
+    {
+      command: "pbem-delete-all-archives",
+      omitGuild: true,
+      expected: "Use `/pbem-delete-all-archives` in a server.",
+    },
+    { command: "unknown-command", expected: "This interaction is not supported." },
+  ];
+
+  try {
+    for (const [index, scenario] of cases.entries()) {
+      const tasks: Promise<unknown>[] = [];
+      const interaction = {
+        id: `invalid-command-${index}`,
+        type: 2,
+        application_id: "test-application",
+        token: "interaction-token",
+        ...(scenario.omitGuild ? {} : { guild_id: "guild-id" }),
+        member: { user: { id: "requesting-user", username: "Requester" } },
+        data: {
+          name: scenario.command,
+          options: scenario.options,
+          resolved: scenario.resolvedUsers ? { users: scenario.resolvedUsers } : undefined,
+        },
+      };
+      const response = await handleDiscordRequest(
+        signedRequest(Buffer.from(JSON.stringify(interaction))),
+        (task) => tasks.push(task),
+        async () => true,
+      );
+      assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
+      await Promise.all(tasks);
+      assert.ok(
+        String(edits[index]?.content).includes(scenario.expected),
+        `${scenario.command} returned: ${String(edits[index]?.content)}`,
+      );
+      assert.deepEqual(edits[index]?.components, []);
+    }
+    assert.equal(edits.length, cases.length);
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = previous.token;
+    if (previous.applicationId === undefined) delete process.env.DISCORD_APPLICATION_ID;
+    else process.env.DISCORD_APPLICATION_ID = previous.applicationId;
+    if (previous.publicKey === undefined) delete process.env.DISCORD_PUBLIC_KEY;
+    else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
+    if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous.databaseUrl;
+  }
+});
+
 test("/pbem-nodb creates and updates a board without making a database request", async () => {
   const previous = {
     token: process.env.DISCORD_BOT_TOKEN,
