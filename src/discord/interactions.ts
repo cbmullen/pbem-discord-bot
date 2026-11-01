@@ -261,6 +261,46 @@ function playerManagementPicker(
   };
 }
 
+function teamManagementPicker(
+  snapshot: GameSnapshot,
+  action: "add" | "remove",
+): Record<string, unknown> {
+  if (action === "add") {
+    return {
+      type: 1,
+      components: [
+        {
+          type: 5,
+          custom_id: `pbem:teams:add:${snapshot.game.id}`,
+          placeholder: "Select 2-8 server members",
+          min_values: 2,
+          max_values: 8,
+        },
+      ],
+    };
+  }
+  const teams = snapshot.players.filter(
+    (player) => (player.notificationUserIds?.length ?? 0) > 1,
+  );
+  return {
+    type: 1,
+    components: [
+      {
+        type: 3,
+        custom_id: `pbem:teams:remove:${snapshot.game.id}`,
+        placeholder: "Select shared teams to remove",
+        min_values: 1,
+        max_values: teams.length,
+        options: teams.map((team) => ({
+          label: team.username.slice(0, 100),
+          description: `Currently ${team.status}`,
+          value: team.userId,
+        })),
+      },
+    ],
+  };
+}
+
 function noDbUserSelect(mode: GameMode, maxPlayers: number): Record<string, unknown> {
   return {
     type: 1,
@@ -642,6 +682,48 @@ async function preparePlayerManagement(
   });
 }
 
+async function prepareTeamManagement(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+  action: "add" | "remove",
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  if (!guildId) throw new Error("Team management requires a server.");
+  const snapshot = await openRepository(config.databaseUrl)
+    .getActiveGameByNameInGuild(guildId, gameName);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+      components: [],
+    });
+    return;
+  }
+  const maxPlayers = snapshot.game.mode === "both" ? 24 : 25;
+  const teams = snapshot.players.filter(
+    (player) => (player.notificationUserIds?.length ?? 0) > 1,
+  );
+  if (action === "add" && snapshot.players.length >= maxPlayers) {
+    await editOriginal(interaction, config, {
+      content: `This game already has the maximum of ${maxPlayers} players.`,
+      components: [],
+    });
+    return;
+  }
+  if (action === "remove" && teams.length === 0) {
+    await editOriginal(interaction, config, {
+      content: "This game has no shared teams to remove.",
+      components: [],
+    });
+    return;
+  }
+  await editOriginal(interaction, config, {
+    content: `Choose members to ${action === "add" ? "add as a shared team to" : "remove as a shared team from"} **${snapshot.game.name.replaceAll("@", "@\u200b")}**.`,
+    components: [teamManagementPicker(snapshot, action)],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 async function processPlayerManagementSelection(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -717,6 +799,92 @@ async function processPlayerManagementSelection(
   });
 }
 
+async function processTeamManagementSelection(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  action: "add" | "remove",
+  gameId: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const actorId = interactionUserId(interaction);
+  if (!guildId || !actorId) throw new Error("Team selection is missing server context.");
+  const repository = openRepository(config.databaseUrl);
+  const snapshot = await repository.getSnapshot(gameId);
+  if (
+    !snapshot ||
+    snapshot.game.status !== "active" ||
+    snapshot.game.guildId !== guildId ||
+    !snapshot.game.messageId
+  ) {
+    await editOriginal(interaction, config, {
+      content: "That game is no longer active in this server.",
+      components: [],
+    });
+    return;
+  }
+
+  const values = interaction.data?.values ?? [];
+  let change: PlayerRosterChange;
+  let affectedUserIds: string[];
+  if (action === "add") {
+    const members = collectSelectedPlayers(interaction);
+    if (
+      members.length < 2 ||
+      members.length > 8 ||
+      members.length !== values.length
+    ) {
+      await editOriginal(interaction, config, {
+        content: "Select 2-8 non-bot server members for a shared team.",
+        components: [],
+      });
+      return;
+    }
+    change = { type: "add-team", members };
+    affectedUserIds = members.map((member) => member.userId);
+  } else {
+    if (values.length === 0) {
+      await editOriginal(interaction, config, {
+        content: "Select at least one shared team to remove.",
+        components: [],
+      });
+      return;
+    }
+    change = { type: "remove-team", teamIds: values };
+    affectedUserIds = values;
+  }
+
+  let updated: GameSnapshot;
+  try {
+    updated = await repository.updateGamePlayers(gameId, change, actorId);
+  } catch (error) {
+    if (error instanceof PlayerRosterError) {
+      await editOriginal(interaction, config, {
+        content: error.message,
+        components: [],
+      });
+      return;
+    }
+    throw error;
+  }
+  const pendingMembers = action === "add"
+    ? updated.players
+      .filter((player) =>
+        affectedUserIds.some((userId) =>
+          (player.notificationUserIds ?? [player.userId]).includes(userId),
+        ) && player.status === "pending",
+      )
+      .flatMap((player) => player.notificationUserIds ?? [player.userId])
+    : [];
+  await moveUpdatedBoardToLatest(repository, gameId, config.botToken, pendingMembers);
+  await editOriginal(interaction, config, {
+    content: action === "add"
+      ? `Added a shared ${affectedUserIds.length}-person team to **${snapshot.game.name}**.`
+      : `Removed ${affectedUserIds.length} shared team${affectedUserIds.length === 1 ? "" : "s"} from **${snapshot.game.name}**.`,
+    components: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 function collectSelectedPlayers(interaction: InteractionPayload): SelectedPlayer[] {
   const values = interaction.data?.values ?? [];
   const users = interaction.data?.resolved?.users ?? {};
@@ -726,7 +894,7 @@ function collectSelectedPlayers(interaction: InteractionPayload): SelectedPlayer
     if (!user || user.bot || user.id !== userId || !user.username) continue;
     selected.push({
       userId: user.id,
-      username: user.global_name ?? user.username,
+      username: user.global_name?.trim() || user.username,
     });
   }
   return selected;
@@ -905,8 +1073,13 @@ export async function moveUpdatedBoardToLatest(
     const board = buildGameBoard(snapshot);
     if (announceUserIds.length > 0) {
       board.allowed_mentions.users = snapshot.players
-        .filter((player) => player.status === "pending" && announceUserIds.includes(player.userId))
-        .map((player) => player.userId);
+        .filter((player) =>
+          player.status === "pending" &&
+          (player.notificationUserIds ?? [player.userId])
+            .some((userId) => announceUserIds.includes(userId)),
+        )
+        .flatMap((player) => player.notificationUserIds ?? [player.userId])
+        .filter((userId) => announceUserIds.includes(userId));
     }
     const nextMessage = await postChannelMessage(
       snapshot.game.channelId,
@@ -1174,6 +1347,7 @@ async function autocompleteActiveGame(
       "pbem-reminders",
       "pbem-remind",
       "pbem-status",
+      "pbem-teams",
       "pbem-players",
     ].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
@@ -1456,6 +1630,25 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-teams") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      const action = optionValue(interaction, "action");
+      if (!gameName || gameName.length > 80 || (action !== "add" && action !== "remove")) {
+        return immediateResponse(4, {
+          content: "Choose an active game and select whether to add or remove a shared team.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-teams` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareTeamManagement(interaction, config, gameName, action);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-remind") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || !interaction.guild_id) {
@@ -1558,6 +1751,22 @@ async function handleInteraction(
 
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id ?? "";
+    if (customId.startsWith("pbem:teams:")) {
+      const [, , action, gameId] = customId.split(":");
+      if (
+        !gameId ||
+        (action !== "add" && action !== "remove") ||
+        (action === "add" && interaction.data?.component_type !== 5) ||
+        (action === "remove" && interaction.data?.component_type !== 3)
+      ) {
+        return immediateResponse(4, {
+          content: "This shared-team selection is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processTeamManagementSelection(interaction, config, action, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
     if (customId.startsWith("pbem:players:")) {
       const [, , action, gameId] = customId.split(":");
       if (

@@ -337,7 +337,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
+`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
 `/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
 `/pbem-back` are listed.
 
@@ -356,13 +356,15 @@ where the bot is installed, open the slash-command picker and check that
    test the mode-switch button.
 7. Run `/pbem-players`, choose the game and add a server member; then repeat
    with remove and confirm only current players are offered.
-8. Run `/pbem-remind` in the same channel and enter the game name to test the
+8. Run `/pbem-teams`, add two server members as a shared team, then verify its
+   single button mentions both members when pending. Remove the team afterward.
+9. Run `/pbem-remind` in the same channel and enter the game name to test the
    manual reminder.
-9. Optionally run `/pbem-delete` with the game name, confirm deletion, and
+10. Optionally run `/pbem-delete` with the game name, confirm deletion, and
    verify that the board is removed and the name can be reused.
-10. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
+11. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
    confirm deletion of every game in the server.
-11. In Neon, open **Tables** and confirm the PBEM tables exist.
+12. In Neon, open **Tables** and confirm the PBEM tables exist.
 
 If all these steps work, Discord, Vercel, and Neon are connected. Your computer
 can now be turned off; Vercel handles interactions when Discord sends them.
@@ -486,6 +488,13 @@ local test is finished.
   done in consecutive mode or pending (and mentioned) in simultaneous mode.
   Removing the current consecutive player advances the turn; a game must
   always retain at least one player.
+- `/pbem-teams game action` adds 2–8 server members as one shared player
+  with one turn button, or removes selected shared teams. The board shows each
+  selected Discord name and mentions every team member when the team is
+  pending. Existing game players cannot be added to a team. Team data is stored
+  inside the game's existing player JSONB array as one player entry, with a
+  `notificationUserIds` list of team members; public status exposes their joined
+  display name as one player. Away and reminder behavior remains unchanged.
 - `/pbem-reminders game days` changes the automated reminder threshold for an
   active game anywhere in the server. Set `days` to 0 to disable reminders.
   Reminders are checked daily at 09:00 UTC and sent privately by DM.

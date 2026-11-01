@@ -27,6 +27,9 @@ export function buildGameBoard(
 ): DiscordMessagePayload {
   const { game, players } = snapshot;
   const pending = players.filter((player) => player.status === "pending");
+  const pendingUserIds = pending.flatMap(
+    (player) => player.notificationUserIds ?? [player.userId],
+  );
   const away = activeAway(snapshot.away, now);
   const awayNow = awayPlayers(players, away, now);
   const components: ActionRow[] = [];
@@ -69,10 +72,10 @@ export function buildGameBoard(
             return `• <@${player.userId}> — ${awayLabel(info.until, now)}`;
           }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back.`
         : "") +
-      `\nPending: ${pending.map((player) => `<@${player.userId}>`).join(", ") || "nobody"}`,
+      `\nPending: ${pendingUserIds.map((userId) => `<@${userId}>`).join(", ") || "nobody"}`,
     components,
     allowed_mentions: {
-      users: announcePending ? pending.map((player) => player.userId) : [],
+      users: announcePending ? pendingUserIds : [],
     },
   };
 }

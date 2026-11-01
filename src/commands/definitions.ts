@@ -58,6 +58,31 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-teams",
+    description: "Add or remove shared-player teams from an active game",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 3,
+        name: "action",
+        description: "Add a shared-player team or remove one",
+        required: true,
+        choices: [
+          { name: "Add team", value: "add" },
+          { name: "Remove team", value: "remove" },
+        ],
+      },
+    ],
+  },
+  {
     name: "pbem-players",
     description: "Add or remove players from an active game",
     options: [

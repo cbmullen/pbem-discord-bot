@@ -92,3 +92,22 @@ test("away players never change who is mentioned for pending turns", () => {
   const board = buildGameBoard(snapshot, true);
   assert.deepEqual(board.allowed_mentions.users, ["user-0", "user-1"]);
 });
+
+test("shared pending players show and mention every team member", () => {
+  const base = makeSnapshot("both", 2, "simultaneous");
+  const snapshot = {
+    ...base,
+    players: [
+      {
+        ...base.players[0]!,
+        username: "Jill / Jack",
+        notificationUserIds: ["jill-id", "jack-id"],
+      },
+      base.players[1]!,
+    ],
+  };
+  const board = buildGameBoard(snapshot, true);
+  assert.match(board.content, /Pending: <@jill-id>, <@jack-id>/);
+  assert.deepEqual(board.allowed_mentions.users, ["jill-id", "jack-id"]);
+  assert.equal(board.components[0]?.components[0]?.label, "Jill / Jack - pending");
+});

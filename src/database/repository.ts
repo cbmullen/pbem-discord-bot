@@ -5,7 +5,12 @@ import {
   selectPlayer,
   switchMode,
 } from "../game/turns.js";
-import { addPlayers, removePlayers } from "../game/players.js";
+import {
+  addPlayers,
+  addTeam,
+  PlayerRosterError,
+  removePlayers,
+} from "../game/players.js";
 import { getDueReminderPlayers } from "../game/reminders.js";
 import { activeAway } from "../game/away.js";
 import type {
@@ -98,7 +103,9 @@ export interface TransitionResult extends GameSnapshot {
 
 export type PlayerRosterChange =
   | { type: "add"; players: SelectedPlayer[] }
-  | { type: "remove"; userIds: string[] };
+  | { type: "remove"; userIds: string[] }
+  | { type: "add-team"; members: SelectedPlayer[] }
+  | { type: "remove-team"; teamIds: string[] };
 
 export class GameNameInUseError extends Error {
   constructor() {
@@ -580,7 +587,24 @@ export function openRepository(databaseUrl: string) {
         const now = new Date().toISOString();
         const players = change.type === "add"
           ? addPlayers(state, change.players, now)
-          : removePlayers(state, change.userIds, now);
+          : change.type === "add-team"
+            ? addTeam(state, change.members, now)
+            : change.type === "remove"
+              ? removePlayers(state, change.userIds, now)
+              : (() => {
+                  if (change.type !== "remove-team") {
+                    throw new Error("Invalid player roster change.");
+                  }
+                  const teams = new Set(
+                    snapshot.players
+                      .filter((player) => (player.notificationUserIds?.length ?? 0) > 1)
+                      .map((player) => player.userId),
+                  );
+                  if (change.teamIds.some((teamId) => !teams.has(teamId))) {
+                    throw new PlayerRosterError("A selected shared team is no longer in this game.");
+                  }
+                  return removePlayers(state, change.teamIds, now);
+                })();
         const event = change.type === "add"
           ? {
               type: "players_added",
@@ -588,6 +612,22 @@ export function openRepository(databaseUrl: string) {
               userIds: change.players.map((player) => player.userId),
               createdAt: now,
             }
+          : change.type === "add-team"
+            ? {
+                type: "team_added",
+                actorId,
+                userIds: change.members.map((player) => player.userId),
+                createdAt: now,
+              }
+            : change.type === "remove-team"
+              ? {
+                  type: "team_removed",
+                  userIds: snapshot.players
+                    .filter((player) => change.teamIds.includes(player.userId))
+                    .flatMap((player) => player.notificationUserIds ?? [player.userId]),
+                  actorId,
+                  createdAt: now,
+                }
           : {
               type: "players_removed",
               actorId,

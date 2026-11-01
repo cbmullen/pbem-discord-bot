@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Player } from "./types.js";
-import { addPlayers, PlayerRosterError, removePlayers } from "./players.js";
+import { addPlayers, addTeam, PlayerRosterError, removePlayers } from "./players.js";
 
 const now = "2026-11-01T09:00:00.000Z";
 const players: Player[] = [
@@ -44,6 +44,73 @@ test("consecutive additions join at the end without changing the current turn", 
     now,
   );
   assert.deepEqual(added.map((player) => player.status), ["pending", "done", "done"]);
+});
+
+test("a shared team is one player with both members in the notification list", () => {
+  const team = addTeam(
+    { mode: "both", activeMode: "simultaneous", players },
+    [
+      { userId: "user-3", username: "Jill" },
+      { userId: "user-4", username: "Jack" },
+    ],
+    now,
+  );
+  assert.equal(team.length, 3);
+  assert.deepEqual(
+    [team[2]?.userId, team[2]?.username, team[2]?.notificationUserIds, team[2]?.status],
+    ["user-3", "Jill / Jack", ["user-3", "user-4"], "pending"],
+  );
+});
+
+test("shared teams require multiple new members and use one roster slot", () => {
+  assert.throws(
+    () => addTeam(
+      { mode: "consecutive", activeMode: "consecutive", players },
+      [{ userId: "user-3", username: "Jill" }],
+      now,
+    ),
+    /at least two/,
+  );
+  assert.throws(
+    () => addTeam(
+      { mode: "consecutive", activeMode: "consecutive", players },
+      Array.from({ length: 9 }, (_, index) => ({
+        userId: `member-${index}`,
+        username: `Member ${index}`,
+      })),
+      now,
+    ),
+    /at most eight/,
+  );
+  assert.throws(
+    () => addTeam(
+      { mode: "consecutive", activeMode: "consecutive", players },
+      [
+        { userId: "user-3", username: "Jill" },
+        { userId: "user-1", username: "Player 1" },
+      ],
+      now,
+    ),
+    /already in this game/,
+  );
+});
+
+test("removing a shared team removes one turn entry", () => {
+  const team = addTeam(
+    { mode: "consecutive", activeMode: "consecutive", players },
+    [
+      { userId: "user-3", username: "Jill" },
+      { userId: "user-4", username: "Jack" },
+    ],
+    now,
+  );
+  const remaining = removePlayers(
+    { mode: "consecutive", activeMode: "consecutive", players: team },
+    ["user-3"],
+    now,
+  );
+  assert.deepEqual(remaining.map((player) => player.userId), ["user-1", "user-2"]);
+  assert.equal(remaining.some((player) => player.notificationUserIds?.includes("user-4")), false);
 });
 
 test("adding existing players or exceeding the game limit is rejected", () => {

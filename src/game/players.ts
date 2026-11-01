@@ -49,6 +49,48 @@ export function addPlayers(
   ];
 }
 
+export function addTeam(
+  state: PlayerRosterState,
+  members: SelectedPlayer[],
+  now: string,
+): Player[] {
+  if (members.length < 2) {
+    throw new PlayerRosterError("Select at least two server members for a shared team.");
+  }
+  if (members.length > 8) {
+    throw new PlayerRosterError("A shared team can have at most eight members.");
+  }
+  const maxPlayers = state.mode === "both" ? 24 : 25;
+  if (state.players.length >= maxPlayers) {
+    throw new PlayerRosterError(`This game supports up to ${maxPlayers} players.`);
+  }
+  const existing = new Set(
+    state.players.flatMap((player) => [
+      player.userId,
+      ...(player.notificationUserIds ?? []),
+    ]),
+  );
+  const selected = new Set<string>();
+  for (const member of members) {
+    if (existing.has(member.userId) || selected.has(member.userId)) {
+      throw new PlayerRosterError(`${member.username} is already in this game.`);
+    }
+    selected.add(member.userId);
+  }
+
+  const status = state.activeMode === "simultaneous" ? "pending" : "done";
+  const team: Player = {
+    userId: members[0]!.userId,
+    username: members.map((member) => member.username).join(" / "),
+    notificationUserIds: members.map((member) => member.userId),
+    position: state.players.length,
+    status,
+    pendingSince: status === "pending" ? now : null,
+    lastUpdatedAt: now,
+  };
+  return [...state.players, team];
+}
+
 export function removePlayers(
   state: PlayerRosterState,
   userIds: string[],

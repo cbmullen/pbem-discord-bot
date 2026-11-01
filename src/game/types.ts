@@ -20,6 +20,7 @@ export interface Game {
 export interface Player {
   userId: string;
   username: string;
+  notificationUserIds?: string[];
   position: number;
   status: PlayerStatus;
   pendingSince: string | null;
