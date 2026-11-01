@@ -602,50 +602,26 @@ export function openRepository(databaseUrl: string) {
       const [totalsRows, playerRows] = await Promise.all([
         sql`
           SELECT
-            COUNT(*)::float8 AS completed_games,
-            AVG(GREATEST(
-              0,
-              EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
-            ))::float8 AS average_game_duration_ms
-          FROM pbem_game_archive
+            completed_games::float8 AS completed_games,
+            CASE WHEN completed_games > 0
+              THEN (total_game_duration_ms / completed_games)::float8
+              ELSE NULL
+            END AS average_game_duration_ms
+          FROM pbem_public_archive_totals
+          WHERE id = true
         `,
         sql`
-          WITH player_rows AS (
-            SELECT
-              archive.game_id,
-              archive.completed_at,
-              member.user_id,
-              COALESCE(
-                player.value->'notificationUsernames'->>((member.ordinality - 1)::int),
-                player.value->>'username'
-              ) AS username,
-              player.value->>'userId' = archive.winner_user_id AS won,
-              COALESCE((player.value->>'completedTurns')::float8, 0) AS completed_turns,
-              COALESCE((player.value->>'totalTurnDurationMs')::float8, 0) AS total_turn_duration_ms
-            FROM pbem_game_archive AS archive
-            CROSS JOIN LATERAL jsonb_array_elements(archive.players) AS player(value)
-            CROSS JOIN LATERAL jsonb_array_elements_text(
-              CASE
-                WHEN jsonb_typeof(player.value->'notificationUserIds') = 'array'
-                  AND jsonb_array_length(player.value->'notificationUserIds') > 0
-                THEN player.value->'notificationUserIds'
-                ELSE jsonb_build_array(player.value->>'userId')
-              END
-            ) WITH ORDINALITY AS member(user_id, ordinality)
-          )
           SELECT
             user_id,
-            (ARRAY_AGG(username ORDER BY completed_at DESC, game_id DESC))[1] AS username,
-            COUNT(*)::float8 AS games_played,
-            COUNT(*) FILTER (WHERE won)::float8 AS wins,
-            SUM(completed_turns)::float8 AS completed_turns,
-            CASE
-              WHEN SUM(completed_turns) > 0
-              THEN (SUM(total_turn_duration_ms) / SUM(completed_turns))::float8
+            username,
+            games_played::float8 AS games_played,
+            wins::float8 AS wins,
+            completed_turns::float8 AS completed_turns,
+            CASE WHEN completed_turns > 0
+              THEN (total_turn_duration_ms / completed_turns)::float8
               ELSE NULL
             END AS average_turn_duration_ms
-          FROM player_rows
-          GROUP BY user_id
+          FROM pbem_public_archive_player_stats
         `,
       ]) as [
         Array<{
@@ -933,6 +909,92 @@ export function openRepository(databaseUrl: string) {
             }])}::jsonb
           FROM finished
           RETURNING *
+        ), player_rows AS (
+          SELECT
+            member.user_id,
+            COALESCE(
+              player.value->'notificationUsernames'->>((member.ordinality - 1)::int),
+              player.value->>'username'
+            ) AS username,
+            archived.completed_at,
+            archived.game_id,
+            player.value->>'userId' = archived.winner_user_id AS won,
+            COALESCE((player.value->>'completedTurns')::bigint, 0) AS completed_turns,
+            COALESCE((player.value->>'totalTurnDurationMs')::float8, 0) AS total_turn_duration_ms
+          FROM archived
+          CROSS JOIN LATERAL jsonb_array_elements(archived.players) AS player(value)
+          CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE
+              WHEN jsonb_typeof(player.value->'notificationUserIds') = 'array'
+                AND jsonb_array_length(player.value->'notificationUserIds') > 0
+              THEN player.value->'notificationUserIds'
+              ELSE jsonb_build_array(player.value->>'userId')
+            END
+          ) WITH ORDINALITY AS member(user_id, ordinality)
+        ), player_totals AS (
+          SELECT
+            user_id,
+            (ARRAY_AGG(username ORDER BY completed_at DESC, game_id DESC))[1] AS username,
+            (ARRAY_AGG(completed_at ORDER BY completed_at DESC, game_id DESC))[1] AS username_completed_at,
+            (ARRAY_AGG(game_id ORDER BY completed_at DESC, game_id DESC))[1] AS username_game_id,
+            COUNT(*) AS games_played,
+            COUNT(*) FILTER (WHERE won) AS wins,
+            SUM(completed_turns) AS completed_turns,
+            SUM(total_turn_duration_ms) AS total_turn_duration_ms
+          FROM player_rows
+          GROUP BY user_id
+        ), updated_player_stats AS (
+          INSERT INTO pbem_public_archive_player_stats (
+            user_id, username, username_completed_at, username_game_id,
+            games_played, wins, completed_turns, total_turn_duration_ms
+          )
+          SELECT
+            user_id, username, username_completed_at, username_game_id,
+            games_played, wins, completed_turns, total_turn_duration_ms
+          FROM player_totals
+          ON CONFLICT (user_id) DO UPDATE
+          SET username = CASE
+                WHEN (EXCLUDED.username_completed_at, EXCLUDED.username_game_id)
+                  > (pbem_public_archive_player_stats.username_completed_at,
+                     pbem_public_archive_player_stats.username_game_id)
+                THEN EXCLUDED.username
+                ELSE pbem_public_archive_player_stats.username
+              END,
+              username_completed_at = GREATEST(
+                pbem_public_archive_player_stats.username_completed_at,
+                EXCLUDED.username_completed_at
+              ),
+              username_game_id = CASE
+                WHEN (EXCLUDED.username_completed_at, EXCLUDED.username_game_id)
+                  > (pbem_public_archive_player_stats.username_completed_at,
+                     pbem_public_archive_player_stats.username_game_id)
+                THEN EXCLUDED.username_game_id
+                ELSE pbem_public_archive_player_stats.username_game_id
+              END,
+              games_played = pbem_public_archive_player_stats.games_played + EXCLUDED.games_played,
+              wins = pbem_public_archive_player_stats.wins + EXCLUDED.wins,
+              completed_turns = pbem_public_archive_player_stats.completed_turns + EXCLUDED.completed_turns,
+              total_turn_duration_ms = pbem_public_archive_player_stats.total_turn_duration_ms
+                + EXCLUDED.total_turn_duration_ms
+          RETURNING user_id
+        ), updated_totals AS (
+          INSERT INTO pbem_public_archive_totals (
+            id, completed_games, total_game_duration_ms
+          )
+          SELECT
+            true,
+            COUNT(*),
+            COALESCE(SUM(GREATEST(
+              0,
+              EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
+            )), 0)
+          FROM archived
+          ON CONFLICT (id) DO UPDATE
+          SET completed_games = pbem_public_archive_totals.completed_games
+                + EXCLUDED.completed_games,
+              total_game_duration_ms = pbem_public_archive_totals.total_game_duration_ms
+                + EXCLUDED.total_game_duration_ms
+          RETURNING id
         )
         SELECT * FROM archived
       `) as ArchiveRow[];

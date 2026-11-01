@@ -112,6 +112,91 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
       )
     `;
   },
+  async (sql) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_public_archive_totals (
+        id boolean PRIMARY KEY DEFAULT true CHECK (id),
+        completed_games bigint NOT NULL,
+        total_game_duration_ms double precision NOT NULL
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_public_archive_player_stats (
+        user_id text PRIMARY KEY,
+        username text NOT NULL,
+        username_completed_at timestamptz NOT NULL,
+        username_game_id uuid NOT NULL,
+        games_played bigint NOT NULL,
+        wins bigint NOT NULL,
+        completed_turns bigint NOT NULL,
+        total_turn_duration_ms double precision NOT NULL
+      )
+    `;
+    await sql`
+      INSERT INTO pbem_public_archive_totals (
+        id, completed_games, total_game_duration_ms
+      )
+      SELECT
+        true,
+        COUNT(*),
+        COALESCE(SUM(GREATEST(
+          0,
+          EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
+        )), 0)
+      FROM pbem_game_archive
+      ON CONFLICT (id) DO UPDATE
+      SET completed_games = EXCLUDED.completed_games,
+          total_game_duration_ms = EXCLUDED.total_game_duration_ms
+    `;
+    await sql`
+      WITH player_rows AS (
+        SELECT
+          archive.game_id,
+          archive.completed_at,
+          member.user_id,
+          COALESCE(
+            player.value->'notificationUsernames'->>((member.ordinality - 1)::int),
+            player.value->>'username'
+          ) AS username,
+          player.value->>'userId' = archive.winner_user_id AS won,
+          COALESCE((player.value->>'completedTurns')::bigint, 0) AS completed_turns,
+          COALESCE((player.value->>'totalTurnDurationMs')::float8, 0) AS total_turn_duration_ms
+        FROM pbem_game_archive AS archive
+        CROSS JOIN LATERAL jsonb_array_elements(archive.players) AS player(value)
+        CROSS JOIN LATERAL jsonb_array_elements_text(
+          CASE
+            WHEN jsonb_typeof(player.value->'notificationUserIds') = 'array'
+              AND jsonb_array_length(player.value->'notificationUserIds') > 0
+            THEN player.value->'notificationUserIds'
+            ELSE jsonb_build_array(player.value->>'userId')
+          END
+        ) WITH ORDINALITY AS member(user_id, ordinality)
+      )
+      INSERT INTO pbem_public_archive_player_stats (
+        user_id, username, username_completed_at, username_game_id,
+        games_played, wins, completed_turns, total_turn_duration_ms
+      )
+      SELECT
+        user_id,
+        (ARRAY_AGG(username ORDER BY completed_at DESC, game_id DESC))[1],
+        (ARRAY_AGG(completed_at ORDER BY completed_at DESC, game_id DESC))[1],
+        (ARRAY_AGG(game_id ORDER BY completed_at DESC, game_id DESC))[1],
+        COUNT(*),
+        COUNT(*) FILTER (WHERE won),
+        SUM(completed_turns),
+        SUM(total_turn_duration_ms)
+      FROM player_rows
+      GROUP BY user_id
+      ON CONFLICT (user_id) DO UPDATE
+      SET username = EXCLUDED.username,
+          username_completed_at = EXCLUDED.username_completed_at,
+          username_game_id = EXCLUDED.username_game_id,
+          games_played = EXCLUDED.games_played,
+          wins = EXCLUDED.wins,
+          completed_turns = EXCLUDED.completed_turns,
+          total_turn_duration_ms = EXCLUDED.total_turn_duration_ms
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {
