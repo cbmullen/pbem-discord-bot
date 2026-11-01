@@ -27,7 +27,6 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
       ADD COLUMN IF NOT EXISTS reminder_days integer NOT NULL DEFAULT 0
       CHECK (reminder_days BETWEEN 0 AND 365)
     `;
-    await sql`ALTER TABLE pbem_games DROP COLUMN IF EXISTS turns_completed`;
     await sql`
       CREATE TABLE IF NOT EXISTS pbem_reminder_deliveries (
         game_id uuid NOT NULL REFERENCES pbem_games(id) ON DELETE CASCADE,
