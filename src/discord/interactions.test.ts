@@ -299,3 +299,83 @@ test("/pbem-nodb creates and updates a board without making a database request",
     console.error = previous.consoleError;
   }
 });
+
+test("failed interactions are reported to the configured webhook without exposing tokens", async () => {
+  const previous = {
+    token: process.env.DISCORD_BOT_TOKEN,
+    applicationId: process.env.DISCORD_APPLICATION_ID,
+    publicKey: process.env.DISCORD_PUBLIC_KEY,
+    databaseUrl: process.env.DATABASE_URL,
+    errorWebhookUrl: process.env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK,
+    fetch: globalThis.fetch,
+    consoleError: console.error,
+  };
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  process.env.DISCORD_APPLICATION_ID = "test-application";
+  process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
+  delete process.env.DATABASE_URL;
+  process.env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK =
+    "https://discord.com/api/webhooks/123/webhook-secret";
+  console.error = () => {};
+  const reports: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = input instanceof Request
+      ? input.url
+      : input instanceof URL
+        ? input.href
+        : input;
+    if (url === process.env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK) {
+      reports.push(String(init?.body));
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/api/v10/webhooks/") && init?.method === "PATCH") {
+      return new Response("mock interaction failure", { status: 500 });
+    }
+    if (url.includes("/api/v10/webhooks/") && init?.method === "POST") {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${init?.method} ${url}`);
+  };
+
+  try {
+    const tasks: Promise<unknown>[] = [];
+    const interaction = {
+      id: "failed-command-id",
+      type: 2,
+      token: "private-interaction-token",
+      guild_id: "guild-id",
+      channel_id: "channel-id",
+      data: { name: "pbem-nodb" },
+    };
+    const response = await handleDiscordRequest(
+      signedRequest(Buffer.from(JSON.stringify(interaction))),
+      (task) => tasks.push(task),
+    );
+    assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
+    await Promise.all(tasks);
+
+    assert.equal(reports.length, 1);
+    const report = JSON.parse(reports[0]!) as { content: string };
+    assert.match(report.content, /PBEM interaction failed/);
+    assert.match(report.content, /failed-command-id/);
+    assert.match(report.content, /pbem-nodb/);
+    assert.match(report.content, /mock interaction failure/);
+    assert.doesNotMatch(report.content, /private-interaction-token|webhook-secret/);
+  } finally {
+    if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = previous.token;
+    if (previous.applicationId === undefined) delete process.env.DISCORD_APPLICATION_ID;
+    else process.env.DISCORD_APPLICATION_ID = previous.applicationId;
+    if (previous.publicKey === undefined) delete process.env.DISCORD_PUBLIC_KEY;
+    else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
+    if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous.databaseUrl;
+    if (previous.errorWebhookUrl === undefined) {
+      delete process.env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK;
+    } else {
+      process.env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK = previous.errorWebhookUrl;
+    }
+    globalThis.fetch = previous.fetch;
+    console.error = previous.consoleError;
+  }
+});

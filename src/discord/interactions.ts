@@ -62,6 +62,7 @@ interface RuntimeConfig {
   applicationId: string;
   publicKey: string;
   databaseUrl: string;
+  errorWebhookUrl: string;
 }
 
 function getConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -69,12 +70,13 @@ function getConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const applicationId = env.DISCORD_APPLICATION_ID?.trim();
   const publicKey = env.DISCORD_PUBLIC_KEY?.trim();
   const databaseUrl = env.DATABASE_URL?.trim() ?? "";
+  const errorWebhookUrl = env.PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK?.trim() ?? "";
   if (!botToken || !applicationId || !publicKey) {
     throw new Error(
       "DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, and DISCORD_PUBLIC_KEY must be configured.",
     );
   }
-  return { botToken, applicationId, publicKey, databaseUrl };
+  return { botToken, applicationId, publicKey, databaseUrl, errorWebhookUrl };
 }
 
 export function verifyDiscordSignature(
@@ -133,6 +135,60 @@ async function reportBackgroundFailure(
   if (!response.ok) {
     throw new Error(
       `Could not report the interaction failure (${response.status}): ${await response.text()}`,
+    );
+  }
+}
+
+function interactionAction(interaction: InteractionPayload): string {
+  const commandName = interaction.data?.name;
+  if (commandName) return commandName;
+  const customId = interaction.data?.custom_id;
+  if (!customId) return "unknown";
+  return customId
+    .split(":")
+    .slice(0, 3)
+    .join(":")
+    .replace(/@/g, "@\u200b")
+    .replace(/[\\`]/g, "'")
+    .slice(0, 120);
+}
+
+function safeErrorSummary(error: unknown): string {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return message
+    .replace(/postgres(?:ql)?:\/\/[^\s"'<>]+/gi, "postgresql://[REDACTED]")
+    .replace(/\/webhooks\/\d+\/[A-Za-z0-9._-]+/g, "/webhooks/[REDACTED]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/@/g, "@\u200b")
+    .replace(/[\\`]/g, "'")
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 900);
+}
+
+async function reportInteractionError(
+  error: unknown,
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+): Promise<void> {
+  if (!config.errorWebhookUrl) return;
+  const content = [
+    "⚠️ **PBEM interaction failed**",
+    `Time: ${new Date().toISOString()}`,
+    `Environment: ${process.env.VERCEL_ENV ?? "unknown"}`,
+    `Interaction: \`${interaction.id ?? "unknown"}\` (type ${interaction.type ?? "unknown"})`,
+    `Action: \`${interactionAction(interaction)}\``,
+    `Server: \`${interaction.guild_id ?? "DM/unknown"}\`; channel: \`${interaction.channel_id ?? "unknown"}\``,
+    `Error: \`${safeErrorSummary(error)}\``,
+  ].join("\n");
+  const response = await fetch(config.errorWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 300);
+    throw new Error(
+      `Could not send PBEM interaction failure report (${response.status}): ${details}`,
     );
   }
 }
@@ -1863,6 +1919,11 @@ async function handleInteraction(
       return await autocompleteActiveGame(interaction, config);
     } catch (error) {
       console.error("Could not load active game suggestions:", error);
+      try {
+        await reportInteractionError(error, interaction, config);
+      } catch (reportError) {
+        console.error("Could not send the interaction failure report:", reportError);
+      }
       return immediateResponse(8, { choices: [] });
     }
   }
@@ -1969,6 +2030,11 @@ function scheduledResponse(
   schedule(
     task.catch(async (error: unknown) => {
       console.error("Background Discord interaction failed:", error);
+      try {
+        await reportInteractionError(error, interaction, config);
+      } catch (reportError) {
+        console.error("Could not send the interaction failure report:", reportError);
+      }
       try {
         await reportBackgroundFailure(interaction, config);
       } catch (reportError) {
@@ -2098,6 +2164,11 @@ export async function handleDiscordRequest(
     return await handleInteraction(interaction, config, schedule);
   } catch (error) {
     console.error("Could not handle Discord interaction:", error);
+    try {
+      await reportInteractionError(error, interaction, config);
+    } catch (reportError) {
+      console.error("Could not send the interaction failure report:", reportError);
+    }
     if (interaction.type === 1) {
       return immediateResponse(1);
     }

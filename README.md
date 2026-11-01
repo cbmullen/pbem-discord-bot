@@ -205,6 +205,14 @@ deployed app. In the Vercel project:
    | `DISCORD_PUBLIC_KEY` | Public Key copied from Discord |
    | `DATABASE_URL` | The entire Neon connection string beginning with `postgresql://` |
    | `CRON_SECRET` | A long random secret used to authorize the scheduled reminder endpoint |
+   | `PBEM_UPDATER_MAJOR_BUMP_NOTIFIER_WEBHOOK` | Optional Discord webhook URL for failed-interaction reports |
+
+Use the same webhook URL stored in the GitHub Actions secret of the same name.
+GitHub repository secrets are not available to the deployed Vercel app, so add
+the URL separately to Vercel if you want runtime interaction failures reported.
+Reports include the interaction ID, command/component action, server/channel
+IDs, and a bounded error summary; they do not include interaction tokens or
+request payloads.
 
 Generate `CRON_SECRET` as a random value of at least 32 bytes, for example by
 running `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`
