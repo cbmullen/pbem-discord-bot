@@ -63,6 +63,30 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
       )
     `;
   },
+  async (sql) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_game_archive (
+        game_id uuid PRIMARY KEY,
+        name text NOT NULL,
+        mode text NOT NULL CHECK (mode IN ('consecutive', 'simultaneous', 'both')),
+        active_mode text NOT NULL CHECK (active_mode IN ('consecutive', 'simultaneous')),
+        reminder_days integer NOT NULL,
+        guild_id text NOT NULL,
+        channel_id text NOT NULL,
+        message_id text,
+        created_by text NOT NULL,
+        created_at timestamptz NOT NULL,
+        completed_at timestamptz NOT NULL,
+        winner_user_id text NOT NULL,
+        players jsonb NOT NULL,
+        events jsonb NOT NULL
+      )
+    `;
+    await sql`
+      CREATE INDEX IF NOT EXISTS pbem_game_archive_completed_at
+      ON pbem_game_archive (completed_at DESC)
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {

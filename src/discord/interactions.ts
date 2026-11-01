@@ -438,6 +438,30 @@ function gameDeletionConfirmation(gameId: string): Record<string, unknown> {
   };
 }
 
+function gameWinnerPicker(snapshot: GameSnapshot): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: `pbem:gameover:${snapshot.game.id}`,
+            placeholder: "Choose the winning player or team",
+            min_values: 1,
+            max_values: 1,
+            options: snapshot.players.map((player) => ({
+              label: player.username.slice(0, 100),
+              description: player.status === "pending" ? "Currently pending" : "Currently done",
+              value: player.userId,
+            })),
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function deleteAllConfirmation(): Record<string, unknown> {
   return {
     components: [
@@ -1336,6 +1360,87 @@ async function prepareGameDeletion(
   });
 }
 
+async function prepareGameover(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-gameover` in a server.",
+    });
+    return;
+  }
+  const snapshot = await openRepository(config.databaseUrl)
+    .getActiveGameByNameInGuild(interaction.guild_id, gameName);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+      components: [],
+    });
+    return;
+  }
+  await editOriginal(interaction, config, {
+    content: `Choose the winning player or team for **${snapshot.game.name.replaceAll("@", "@\u200b")}**. This archives the game and removes its active board.`,
+    ...gameWinnerPicker(snapshot),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function processGameoverSelection(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const actorId = interactionUserId(interaction);
+  const winnerUserId = interaction.data?.values?.[0];
+  if (!guildId || !actorId || !winnerUserId) {
+    throw new Error("Game completion is missing server, user, or winner context.");
+  }
+  const archived = await openRepository(config.databaseUrl)
+    .completeGame(gameId, guildId, winnerUserId, actorId);
+  if (!archived) {
+    await editOriginal(interaction, config, {
+      content: "That game or winning player is no longer available. Run `/pbem-gameover` again.",
+      components: [],
+    });
+    return;
+  }
+
+  const winner = archived.players.find((player) => player.userId === winnerUserId);
+  if (!winner) throw new Error("The archived game does not contain its selected winner.");
+  if (archived.messageId) {
+    try {
+      await deleteChannelMessage(archived.channelId, archived.messageId, config.botToken);
+    } catch (error) {
+      console.error("Could not remove the completed PBEM game board:", error);
+    }
+  }
+
+  const winnerUserIds = winner.notificationUserIds ?? [winner.userId];
+  const mentions = winnerUserIds.map((userId) => `<@${userId}>`).join(" ");
+  try {
+    await postChannelMessage(archived.channelId, config.botToken, {
+      content: `Congratulations to **${winner.username.replaceAll("@", "@\u200b")}**${mentions ? ` (${mentions})` : ""} for winning **${archived.name.replaceAll("@", "@\u200b")}**!`,
+      allowed_mentions: { users: winnerUserIds },
+    });
+  } catch (error) {
+    console.error("The game was archived but the congratulations message could not be sent:", error);
+    await editOriginal(interaction, config, {
+      content: `The game was archived, but I couldn't post the congratulations message. Check the bot's channel permissions.`,
+      components: [],
+    });
+    return;
+  }
+
+  await editOriginal(interaction, config, {
+    content: `**${archived.name.replaceAll("@", "@\u200b")}** has been archived.`,
+    components: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 async function autocompleteActiveGame(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -1349,6 +1454,7 @@ async function autocompleteActiveGame(
       "pbem-status",
       "pbem-teams",
       "pbem-players",
+      "pbem-gameover",
     ].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
     !interaction.guild_id
@@ -1649,6 +1755,18 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-gameover") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      if (!gameName || gameName.length > 80 || !interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Choose an active game and use `/pbem-gameover` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = prepareGameover(interaction, config, gameName);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-remind") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || !interaction.guild_id) {
@@ -1751,6 +1869,17 @@ async function handleInteraction(
 
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id ?? "";
+    if (customId.startsWith("pbem:gameover:")) {
+      const [, action, gameId] = customId.split(":");
+      if (action !== "gameover" || !gameId || interaction.data?.component_type !== 3) {
+        return immediateResponse(4, {
+          content: "This winner selection is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processGameoverSelection(interaction, config, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
     if (customId.startsWith("pbem:teams:")) {
       const [, , action, gameId] = customId.split(":");
       if (

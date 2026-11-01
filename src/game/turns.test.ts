@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInitialPlayers, selectPlayer, switchMode } from "./turns.js";
+import {
+  createInitialPlayers,
+  recordCompletedTurnDurations,
+  selectPlayer,
+  switchMode,
+} from "./turns.js";
 
 const now = "2026-10-29T00:00:00.000Z";
 const selected = [
@@ -60,4 +65,83 @@ test("both games start consecutive and switching modes applies defined transitio
     consecutive.state.players.map((player) => player.status),
     ["pending", "done", "done"],
   );
+});
+
+test("completed turns accumulate their elapsed pending duration", () => {
+  const started = "2026-10-30T09:00:00.000Z";
+  const ended = "2026-10-31T09:00:00.000Z";
+  const before = createInitialPlayers(
+    [{ userId: "a", username: "A" }, { userId: "b", username: "B" }],
+    "simultaneous",
+    started,
+  );
+  const transition = selectPlayer(
+    { mode: "simultaneous", activeMode: "simultaneous", players: before },
+    "a",
+    ended,
+  );
+  const measured = recordCompletedTurnDurations(
+    before,
+    transition.state.players,
+    transition.eventType,
+    "a",
+    ended,
+  );
+  assert.equal(measured[0]?.completedTurns, 1);
+  assert.equal(measured[0]?.totalTurnDurationMs, 24 * 60 * 60 * 1000);
+  assert.equal(measured[1]?.completedTurns, undefined);
+});
+
+test("the final simultaneous click records its duration through the cycle reset", () => {
+  const started = "2026-10-30T09:00:00.000Z";
+  const ended = "2026-10-31T09:00:00.000Z";
+  const before = createInitialPlayers(
+    [{ userId: "a", username: "A" }, { userId: "b", username: "B" }],
+    "simultaneous",
+    started,
+  );
+  const transition = selectPlayer(
+    {
+      mode: "simultaneous",
+      activeMode: "simultaneous",
+      players: before.map((player) =>
+        player.userId === "a" ? { ...player, status: "done", pendingSince: null } : player,
+      ),
+    },
+    "b",
+    ended,
+  );
+  const measured = recordCompletedTurnDurations(
+    before.map((player) =>
+      player.userId === "a" ? { ...player, status: "done", pendingSince: null } : player,
+    ),
+    transition.state.players,
+    transition.eventType,
+    "b",
+    ended,
+  );
+  assert.equal(transition.eventType, "cycle_reset");
+  assert.equal(measured[1]?.completedTurns, 1);
+  assert.equal(measured[1]?.totalTurnDurationMs, 24 * 60 * 60 * 1000);
+});
+
+test("switching turn modes does not count as a completed player turn", () => {
+  const started = "2026-10-30T09:00:00.000Z";
+  const initial = createInitialPlayers(
+    [{ userId: "a", username: "A" }, { userId: "b", username: "B" }],
+    "consecutive",
+    started,
+  );
+  const transition = switchMode(
+    { mode: "both", activeMode: "consecutive", players: initial },
+    "2026-10-31T09:00:00.000Z",
+  );
+  const measured = recordCompletedTurnDurations(
+    initial,
+    transition.state.players,
+    transition.eventType,
+    null,
+    "2026-10-31T09:00:00.000Z",
+  );
+  assert.ok(measured.every((player) => player.completedTurns === undefined));
 });

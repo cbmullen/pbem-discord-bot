@@ -1,6 +1,7 @@
 # Things TODO
 
 - [x] Add or remove players mid-game. Players drop out and others join in long-running games. A /pbem-players command or a board button would cover it.
+- [x] Add teams
 - Game end and archive. Add “finish game” with a final summary, rather than only deleting. That keeps stats and frees the name.
 Notifications and reminders
 - Per-user reminder preferences. A /pbem-notify command to choose DM, channel ping, or none, plus quiet hours or a timezone, so the 09:00 UTC reminder doesn’t wake people.
@@ -10,3 +11,4 @@ Notifications and reminders
 - Stats command. Average turn time per player, slowest and fastest, and games played.
 - Error reporting to a channel or webhook. You already have a webhook for dependency bumps, so reuse the pattern for failed interactions.
 - Auto-cleanup. Archive or warn about games with no activity for N days, since the free Neon tier has storage limits.
+Omnipotence Temptations Pestilence

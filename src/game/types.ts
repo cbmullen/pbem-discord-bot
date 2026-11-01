@@ -21,6 +21,9 @@ export interface Player {
   userId: string;
   username: string;
   notificationUserIds?: string[];
+  notificationUsernames?: string[];
+  completedTurns?: number;
+  totalTurnDurationMs?: number;
   position: number;
   status: PlayerStatus;
   pendingSince: string | null;

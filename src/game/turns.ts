@@ -11,6 +11,42 @@ export interface TurnTransition {
   eventType: "player_selected" | "player_marked_done" | "cycle_reset" | "mode_changed";
 }
 
+export function recordCompletedTurnDurations(
+  previous: Player[],
+  next: Player[],
+  eventType: TurnTransition["eventType"],
+  selectedPlayerId: string | null,
+  completedAt: string,
+): Player[] {
+  const previousById = new Map(previous.map((player) => [player.userId, player]));
+  const completed = new Set(
+    eventType === "mode_changed"
+      ? []
+      : previous
+        .filter((player) =>
+          player.status === "pending" &&
+          next.find((candidate) => candidate.userId === player.userId)?.status === "done",
+        )
+        .map((player) => player.userId),
+  );
+  if (eventType === "cycle_reset" && selectedPlayerId) {
+    completed.add(selectedPlayerId);
+  }
+
+  return next.map((player) => {
+    if (!completed.has(player.userId)) return player;
+    const previousPlayer = previousById.get(player.userId);
+    if (!previousPlayer?.pendingSince) return player;
+    const duration = Date.parse(completedAt) - Date.parse(previousPlayer.pendingSince);
+    if (!Number.isFinite(duration) || duration < 0) return player;
+    return {
+      ...player,
+      completedTurns: (previousPlayer.completedTurns ?? 0) + 1,
+      totalTurnDurationMs: (previousPlayer.totalTurnDurationMs ?? 0) + duration,
+    };
+  });
+}
+
 function updatePlayer(
   player: Player,
   status: PlayerStatus,

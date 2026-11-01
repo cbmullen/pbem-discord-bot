@@ -8,7 +8,7 @@ import {
 import healthRoute from "../../api/health.js";
 import publicGamesRoute from "../../api/public-games.js";
 import { resolveGuildNames } from "../discord/guild-names.js";
-import { addServerNames } from "./public-games.js";
+import { addServerNames, summarizePublicArchives } from "./public-games.js";
 
 test("public API responses allow anonymous cross-origin reads without credentials", async () => {
   const response = publicJsonResponse({ status: "healthy" });
@@ -90,4 +90,93 @@ test("public game data includes server names without guild IDs", () => {
   assert.equal(game?.name, "Example game");
   assert.equal(game?.reminderDays, 3);
   assert.equal("guildId" in (game ?? {}), false);
+});
+
+test("public archive statistics count shared-team wins for every member without exposing IDs", () => {
+  const summary = summarizePublicArchives(
+    [{
+      gameId: "private-game-id",
+      name: "Archived game",
+      mode: "simultaneous",
+      activeMode: "simultaneous",
+      reminderDays: 0,
+      guildId: "private-guild-id",
+      channelId: "private-channel-id",
+      messageId: null,
+      createdBy: "private-creator-id",
+      createdAt: "2026-10-30T00:00:00.000Z",
+      completedAt: "2026-11-01T00:00:00.000Z",
+      winnerUserId: "jill-id",
+      players: [
+        {
+          userId: "jill-id",
+          username: "Jill / Jack",
+          notificationUserIds: ["jill-id", "jack-id"],
+          notificationUsernames: ["Jill", "Jack"],
+          position: 0,
+          status: "done",
+          pendingSince: null,
+          lastUpdatedAt: "2026-10-31T00:00:00.000Z",
+          completedTurns: 2,
+          totalTurnDurationMs: 8 * 60 * 60 * 1000,
+        },
+        {
+          userId: "sam-id",
+          username: "Sam",
+          position: 1,
+          status: "done",
+          pendingSince: null,
+          lastUpdatedAt: "2026-10-31T00:00:00.000Z",
+          completedTurns: 1,
+          totalTurnDurationMs: 3 * 60 * 60 * 1000,
+        },
+      ],
+      events: [{ type: "player_marked_done" }],
+    }],
+    new Map([["private-guild-id", "Example server"]]),
+  );
+
+  assert.equal(summary.completedGames[0]?.winner, "Jill / Jack");
+  assert.equal(summary.completedGames[0]?.durationMs, 2 * 24 * 60 * 60 * 1000);
+  assert.equal(summary.completedGames[0]?.completedTurns, 3);
+  assert.equal(
+    summary.completedGames[0]?.averageTurnDurationMs,
+    (11 * 60 * 60 * 1000) / 3,
+  );
+  assert.deepEqual(
+    summary.playerStats.map(({ username, wins, gamesPlayed, completedTurns, averageTurnDurationMs }) => ({
+      username,
+      wins,
+      gamesPlayed,
+      completedTurns,
+      averageTurnDurationMs,
+    })),
+    [
+      {
+        username: "Jack",
+        wins: 1,
+        gamesPlayed: 1,
+        completedTurns: 2,
+        averageTurnDurationMs: 4 * 60 * 60 * 1000,
+      },
+      {
+        username: "Jill",
+        wins: 1,
+        gamesPlayed: 1,
+        completedTurns: 2,
+        averageTurnDurationMs: 4 * 60 * 60 * 1000,
+      },
+      {
+        username: "Sam",
+        wins: 0,
+        gamesPlayed: 1,
+        completedTurns: 1,
+        averageTurnDurationMs: 3 * 60 * 60 * 1000,
+      },
+    ],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(summary),
+    /jill-id|jack-id|private-guild-id|private-game-id|private-creator-id/,
+  );
 });

@@ -25,7 +25,12 @@ export function addPlayers(
   if (state.players.length + additions.length > maxPlayers) {
     throw new PlayerRosterError(`This game supports up to ${maxPlayers} players.`);
   }
-  const existing = new Set(state.players.map((player) => player.userId));
+  const existing = new Set(
+    state.players.flatMap((player) => [
+      player.userId,
+      ...(player.notificationUserIds ?? []),
+    ]),
+  );
   const selected = new Set<string>();
   for (const player of additions) {
     if (existing.has(player.userId) || selected.has(player.userId)) {
@@ -83,6 +88,7 @@ export function addTeam(
     userId: members[0]!.userId,
     username: members.map((member) => member.username).join(" / "),
     notificationUserIds: members.map((member) => member.userId),
+    notificationUsernames: members.map((member) => member.username),
     position: state.players.length,
     status,
     pendingSince: status === "pending" ? now : null,

@@ -1,6 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { randomUUID } from "node:crypto";
 import {
+  recordCompletedTurnDurations,
   createInitialPlayers,
   selectPlayer,
   switchMode,
@@ -76,6 +77,40 @@ export interface PublicGameStatus {
   }>;
 }
 
+export interface ArchivedGame {
+  gameId: string;
+  name: string;
+  mode: GameMode;
+  activeMode: ActiveMode;
+  reminderDays: number;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  createdBy: string;
+  createdAt: string;
+  completedAt: string;
+  winnerUserId: string;
+  players: Player[];
+  events: Array<Record<string, unknown>>;
+}
+
+interface ArchiveRow {
+  game_id: string;
+  name: string;
+  mode: GameMode;
+  active_mode: ActiveMode;
+  reminder_days: number;
+  guild_id: string;
+  channel_id: string;
+  message_id: string | null;
+  created_by: string;
+  created_at: string;
+  completed_at: string;
+  winner_user_id: string;
+  players: Player[] | string;
+  events: Array<Record<string, unknown>> | string;
+}
+
 interface AwayRow {
   guild_id: string;
   user_id: string;
@@ -134,6 +169,10 @@ export async function listPublicActiveGames(
   databaseUrl: string,
 ): Promise<PublicGameStatus[]> {
   return openRepository(databaseUrl).listPublicGames();
+}
+
+export async function listPublicArchivedGames(databaseUrl: string): Promise<ArchivedGame[]> {
+  return openRepository(databaseUrl).listPublicArchives();
 }
 
 function parseJson<T>(value: T | string): T {
@@ -427,6 +466,29 @@ export function openRepository(databaseUrl: string) {
       }));
     },
 
+    async listPublicArchives(): Promise<ArchivedGame[]> {
+      const rows = (await sql`
+        SELECT * FROM pbem_game_archive
+        ORDER BY completed_at DESC
+      `) as ArchiveRow[];
+      return rows.map((row) => ({
+        gameId: row.game_id,
+        name: row.name,
+        mode: row.mode,
+        activeMode: row.active_mode,
+        reminderDays: row.reminder_days,
+        guildId: row.guild_id,
+        channelId: row.channel_id,
+        messageId: row.message_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        completedAt: row.completed_at,
+        winnerUserId: row.winner_user_id,
+        players: parseJson<Player[]>(row.players),
+        events: parseJson<Array<Record<string, unknown>>>(row.events),
+      }));
+    },
+
     async replaceBoardMessageId(
       gameId: string,
       previousMessageId: string,
@@ -651,6 +713,61 @@ export function openRepository(databaseUrl: string) {
       throw new Error("Game changed repeatedly; please try again.");
     },
 
+    async completeGame(
+      gameId: string,
+      guildId: string,
+      winnerUserId: string,
+      actorId: string,
+      completedAt = new Date().toISOString(),
+    ): Promise<ArchivedGame | null> {
+      const rows = (await sql`
+        WITH finished AS (
+          DELETE FROM pbem_games
+          WHERE id = ${gameId}
+            AND guild_id = ${guildId}
+            AND status = 'active'
+            AND players @> ${JSON.stringify([{ userId: winnerUserId }])}::jsonb
+          RETURNING *
+        ), archived AS (
+          INSERT INTO pbem_game_archive (
+            game_id, name, mode, active_mode, reminder_days, guild_id, channel_id, message_id,
+            created_by, created_at, completed_at, winner_user_id, players, events
+          )
+          SELECT
+            id, name, mode, active_mode, reminder_days, guild_id, channel_id, message_id,
+            created_by, created_at, ${completedAt}, ${winnerUserId},
+            players,
+            events || ${JSON.stringify([{
+              type: "game_completed",
+              actorId,
+              winnerUserId,
+              createdAt: completedAt,
+            }])}::jsonb
+          FROM finished
+          RETURNING *
+        )
+        SELECT * FROM archived
+      `) as ArchiveRow[];
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        gameId: row.game_id,
+        name: row.name,
+        mode: row.mode,
+        activeMode: row.active_mode,
+        reminderDays: row.reminder_days,
+        guildId: row.guild_id,
+        channelId: row.channel_id,
+        messageId: row.message_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        completedAt: row.completed_at,
+        winnerUserId: row.winner_user_id,
+        players: parseJson<Player[]>(row.players),
+        events: parseJson<Array<Record<string, unknown>>>(row.events),
+      };
+    },
+
   };
   return repository;
 
@@ -676,6 +793,13 @@ export function openRepository(databaseUrl: string) {
           ? switchMode(state, new Date().toISOString())
           : selectPlayer(state, playerId ?? "", new Date().toISOString());
       const now = new Date().toISOString();
+      const players = recordCompletedTurnDurations(
+        snapshot.players,
+        transition.state.players,
+        transition.eventType,
+        playerId,
+        now,
+      );
       const event = {
         type: transition.eventType,
         actorId,
@@ -690,7 +814,7 @@ export function openRepository(databaseUrl: string) {
       const updated = (await sql`
         UPDATE pbem_games
         SET active_mode = ${transition.state.activeMode},
-            players = ${JSON.stringify(transition.state.players)}::jsonb,
+            players = ${JSON.stringify(players)}::jsonb,
             events = ${JSON.stringify(events)}::jsonb,
             version = version + 1
         WHERE id = ${gameId} AND status = 'active' AND version = ${row.version}

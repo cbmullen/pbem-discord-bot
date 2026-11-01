@@ -251,7 +251,9 @@ The same deployment also exposes:
 - `GET /api/public-games` — public, read-only active-game and player status for
   the PBEM status page. It returns server names, game names, player display names
   and statuses, pending timestamps, active mode, and the configured automated
-  reminder threshold. It
+  reminder threshold. It also returns completed-game summaries, cumulative
+  per-player wins/games/turn counts/average turn duration, and total game counts
+  and average game length. It
   does not return Discord IDs, server/channel IDs, creator IDs, or the interaction
   token. This endpoint intentionally allows cross-origin requests for the public
   notebook page. Anyone can view the returned status data.
@@ -337,7 +339,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
+`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
 `/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
 `/pbem-back` are listed.
 
@@ -358,13 +360,16 @@ where the bot is installed, open the slash-command picker and check that
    with remove and confirm only current players are offered.
 8. Run `/pbem-teams`, add two server members as a shared team, then verify its
    single button mentions both members when pending. Remove the team afterward.
-9. Run `/pbem-remind` in the same channel and enter the game name to test the
+9. Run `/pbem-gameover`, choose the game and a winning player/team, and verify
+   that the board is removed, a congratulations message appears, and the game
+   appears in `/api/public-games` as completed.
+10. Run `/pbem-remind` in the same channel and enter the game name to test the
    manual reminder.
-10. Optionally run `/pbem-delete` with the game name, confirm deletion, and
+11. Optionally run `/pbem-delete` with the game name, confirm deletion, and
    verify that the board is removed and the name can be reused.
-11. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
+12. Run `/pbem-list` to see active games, then `/pbem-delete-all` to review and
    confirm deletion of every game in the server.
-12. In Neon, open **Tables** and confirm the PBEM tables exist.
+13. In Neon, open **Tables** and confirm the PBEM tables exist.
 
 If all these steps work, Discord, Vercel, and Neon are connected. Your computer
 can now be turned off; Vercel handles interactions when Discord sends them.
@@ -483,6 +488,16 @@ local test is finished.
   The command can be run in any channel in the server.
 - `/pbem-status game` privately shows an active game's mode, player statuses,
   start time, and automated reminder setting.
+- `/pbem-gameover game` asks you to choose the winning player or shared team,
+  posts a public congratulations message, removes the active board, and moves
+  the full game snapshot and available event history into the archive. This
+  removes the game from active commands and frees its name. `/api/public-games`
+  includes completed games plus cumulative wins, games played, completed turns,
+  average turn duration, and average game length. Turn times are recorded from
+  when the roster entry became pending until it was marked done; teams share the
+  same turn statistics, and a team win counts for every team member. Turn-time
+  tracking starts with this update; earlier turns in existing games cannot be
+  reconstructed from the limited event history.
 - `/pbem-players game action` adds server members to or removes existing players
   from an active game. Added players join the end of the roster: they start
   done in consecutive mode or pending (and mentioned) in simultaneous mode.

@@ -70,3 +70,13 @@ test("/pbem-teams chooses an active game and an add or remove action", () => {
   );
   assert.equal(optionsOf(command)[0]?.autocomplete, true);
 });
+
+test("/pbem-gameover chooses an active game", () => {
+  const command = commands.find((entry) => entry.name === "pbem-gameover");
+  assert.ok(command);
+  assert.deepEqual(
+    optionsOf(command).map((option) => [option.name, option.type, option.required]),
+    [["game", 3, true]],
+  );
+  assert.equal(optionsOf(command)[0]?.autocomplete, true);
+});

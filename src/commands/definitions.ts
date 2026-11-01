@@ -208,6 +208,21 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-gameover",
+    description: "Finish a game, record the winner, and archive its stats",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+    ],
+  },
+  {
     name: "pbem-list",
     description: "List PBEM games in this server",
   },

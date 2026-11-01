@@ -1,11 +1,14 @@
-import { listPublicActiveGames } from "../src/database/repository.js";
+import {
+  listPublicActiveGames,
+  listPublicArchivedGames,
+} from "../src/database/repository.js";
 import { resolveGuildNames } from "../src/discord/guild-names.js";
 import {
   methodNotAllowedResponse,
   publicJsonResponse,
   publicOptionsResponse,
 } from "../src/http/public-api.js";
-import { addServerNames } from "../src/http/public-games.js";
+import { addServerNames, summarizePublicArchives } from "../src/http/public-games.js";
 
 export default {
   async fetch(request: Request): Promise<Response> {
@@ -20,13 +23,16 @@ export default {
 
     try {
       const games = await listPublicActiveGames(databaseUrl);
+      const archives = await listPublicArchivedGames(databaseUrl);
       const guildNames = await resolveGuildNames(
-        games.map((game) => game.guildId),
+        [...games.map((game) => game.guildId), ...archives.map((game) => game.guildId)],
         botToken,
       );
+      const summary = summarizePublicArchives(archives, guildNames);
       return publicJsonResponse({
         generatedAt: new Date().toISOString(),
         games: addServerNames(games, guildNames),
+        ...summary,
       });
     } catch (error) {
       console.error("Could not load public PBEM status:", error);
