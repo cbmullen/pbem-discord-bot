@@ -35,7 +35,7 @@ export async function resolveGuildNames(
       headers: { Authorization: `Bot ${botToken}` },
     });
 
-    if (response.status === 404) {
+    if (response.status === 403 || response.status === 404) {
       return [guildId, "Unavailable server"] as const;
     }
     if (!response.ok) {

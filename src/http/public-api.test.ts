@@ -73,6 +73,21 @@ test("missing Discord guilds receive a non-identifying public label", async () =
   assert.equal(names.get(guildId), "Unavailable server");
 });
 
+test("inaccessible Discord guilds do not prevent public status from resolving other names", async () => {
+  const inaccessibleGuildId = `inaccessible-guild-${Date.now()}`;
+  const availableGuildId = `available-guild-${Date.now()}`;
+  const names = await resolveGuildNames(
+    [inaccessibleGuildId, availableGuildId],
+    "test-token",
+    async (input) =>
+      String(input).includes(inaccessibleGuildId)
+        ? new Response(null, { status: 403 })
+        : Response.json({ name: "Available server" }),
+  );
+  assert.equal(names.get(inaccessibleGuildId), "Unavailable server");
+  assert.equal(names.get(availableGuildId), "Available server");
+});
+
 test("public game data includes server names without guild IDs", () => {
   const [game] = addServerNames(
     [{
