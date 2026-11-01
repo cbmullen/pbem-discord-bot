@@ -126,6 +126,70 @@ test("signed Discord ping requests receive the required pong response", async ()
   }
 });
 
+test("/pbem-help replies ephemerally with the user guide without database access", async () => {
+  const previous = {
+    token: process.env.DISCORD_BOT_TOKEN,
+    applicationId: process.env.DISCORD_APPLICATION_ID,
+    publicKey: process.env.DISCORD_PUBLIC_KEY,
+    databaseUrl: process.env.DATABASE_URL,
+    fetch: globalThis.fetch,
+  };
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  process.env.DISCORD_APPLICATION_ID = "test-application";
+  process.env.DISCORD_PUBLIC_KEY = publicKeyHex;
+  delete process.env.DATABASE_URL;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = input instanceof Request
+      ? input.url
+      : input instanceof URL
+        ? input.href
+        : input;
+    calls.push({ url, init });
+    return new Response(null, { status: 204 });
+  };
+  const tasks: Promise<unknown>[] = [];
+  try {
+    const interaction = {
+      id: "help-interaction",
+      application_id: "test-application",
+      token: "test-interaction-token",
+      type: 2,
+      data: { name: "pbem-help" },
+    };
+    const response = await handleDiscordRequest(
+      signedRequest(Buffer.from(JSON.stringify(interaction))),
+      (task) => tasks.push(task),
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
+    await Promise.all(tasks);
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0]?.url,
+      "https://discord.com/api/v10/webhooks/test-application/test-interaction-token/messages/@original",
+    );
+    assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+      content: [
+        "**PBEM Discord Bot User Guide**",
+        "Learn how to create games, manage players and teams, configure reminders and notifications, and use the other commands:",
+        "https://cbmullen-inc.github.io/public-notebook/pbem-status/user-guide.html",
+      ].join("\n\n"),
+      allowed_mentions: { parse: [] },
+    });
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = previous.token;
+    if (previous.applicationId === undefined) delete process.env.DISCORD_APPLICATION_ID;
+    else process.env.DISCORD_APPLICATION_ID = previous.applicationId;
+    if (previous.publicKey === undefined) delete process.env.DISCORD_PUBLIC_KEY;
+    else process.env.DISCORD_PUBLIC_KEY = previous.publicKey;
+    if (previous.databaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous.databaseUrl;
+  }
+});
+
 test("invalid Discord signatures are rejected", async () => {
   const body = Buffer.from('{"type":1}');
   const previous = {

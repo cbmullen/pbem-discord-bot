@@ -289,6 +289,10 @@ export const commands = [
     description: "List PBEM games in this server",
   },
   {
+    name: "pbem-help",
+    description: "Show the PBEM user guide",
+  },
+  {
     name: "pbem-delete-all",
     description: "Delete all PBEM games in this server",
   },

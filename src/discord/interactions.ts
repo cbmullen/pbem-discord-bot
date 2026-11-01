@@ -2457,6 +2457,17 @@ async function processClaimedInteraction(
     await prepareNoDbGame(interaction, config);
     return;
   }
+  if (interaction.type === 2 && interaction.data?.name === "pbem-help") {
+    await editOriginal(interaction, config, {
+      content: [
+        "**PBEM Discord Bot User Guide**",
+        "Learn how to create games, manage players and teams, configure reminders and notifications, and use the other commands:",
+        "https://cbmullen-inc.github.io/public-notebook/pbem-status/user-guide.html",
+      ].join("\n\n"),
+      allowed_mentions: { parse: [] },
+    });
+    return;
+  }
   if (interaction.type === 3 && interaction.data?.custom_id?.startsWith("pbem:nodb:")) {
     const action = interaction.data.custom_id.split(":")[2];
     if (action === "select") {

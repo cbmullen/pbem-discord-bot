@@ -349,7 +349,7 @@ definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
 `/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-rematch`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-notify`,
-`/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
+`/pbem-delete`, `/pbem-list`, `/pbem-help`, `/pbem-delete-all`, `/pbem-away`, and
 `/pbem-back` are listed.
 
 ## 6. Verify the bot
@@ -479,6 +479,12 @@ public HTTPS tunnel and temporarily set the Discord Interactions Endpoint URL
 to that tunnel's `/api/interactions` address. Restore the Vercel URL when the
 local test is finished.
 
+## User guide
+
+For detailed instructions on creating games, configuring players and teams,
+setting notifications, handling away status, and using every command, see the
+[PBEM Discord Bot User Guide](./docs/USER-GUIDE.md).
+
 ## Commands and turn behavior
 
 - `/pbem-nodb name mode` creates a separate board without connecting to Neon.
@@ -525,11 +531,12 @@ local test is finished.
   pending. Existing game players cannot be added to a team. Team data is stored
   inside the game's existing player JSONB array as one player entry, with a
   `notificationUserIds` list of team members; public status exposes their joined
-  display name as one player. Away and reminder behavior remains unchanged.
+  display name as one player. Scheduled reminders notify all team members, but
+  the first selected member represents the team's roster entry for away status.
 - `/pbem-reminders game days` changes the automated reminder threshold for an
   active game anywhere in the server. Set `days` to 0 to disable reminders.
   Reminders are checked daily at 09:00 UTC.
-- `/pbem-notify [user] delivery quiet-hours [utc-offset]` sets per-server
+- `/pbem-notify delivery quiet-hours [user] [utc-offset]` sets per-server
   scheduled reminder preferences for a member; any server member can update
   another member's settings, and `user` defaults to the command invoker.
   `delivery` can be `dm`, `channel` (ping that member in each game's channel),
@@ -545,14 +552,15 @@ local test is finished.
   suggestions. Select one to review a confirmation, then remove the game and
   its board. Any server member can confirm deletion. The command can be run in
   any channel in that server.
-- `/pbem-away [player] [until]` marks a player as away in **every** active game
-  they are in on this server (and any game they are added to later). `player`
+- `/pbem-away [player] [until]` marks a player as away in every active game
+  where they represent a roster entry (and any game they are added to later).
+  For a shared team, the first selected member represents that entry. `player`
   defaults to you, and anyone may mark anyone away. `until` is an optional return
   date as `YYYY-MM-DD`; the player is back at 00:00 UTC on that date. Without it,
   the player stays away until `/pbem-back`.
 - `/pbem-back [player]` clears a player's away status. `player` defaults to you.
 - While anyone in a game is away, that game is **paused**: its board says so,
-  the away player's status button becomes a green **Mark <player> back** button
+  the away player's status button becomes a grey **Mark <player> back** button
   that any player can click, and **no reminders** (automated or `/pbem-remind`)
   are sent to anyone in that game. Turns are never skipped. A game resumes when
   nobody in it is away. A return date ends the pause automatically; the daily

@@ -73,10 +73,10 @@ test("away status provides back buttons in place of away players' status buttons
   assert.match(board.content, /<@user-0> — Away until 10 Nov/);
   assert.match(board.content, /<@user-2> — Away \(no return date\)/);
   assert.match(board.content, /reminders are disabled until everyone is back/);
-  assert.match(board.content, /Click an away player's green button to mark them back/);
+  assert.match(board.content, /Click an away player's grey button to mark them back/);
   assert.equal(board.components[0]!.components[0]!.custom_id, "pbem:back:game-id:user-0");
   assert.equal(board.components[0]!.components[0]!.label, "Mark Player 0 back");
-  assert.equal(board.components[0]!.components[0]!.style, 3);
+  assert.equal(board.components[0]!.components[0]!.style, 2);
   assert.equal(board.components[0]!.components[2]!.custom_id, "pbem:back:game-id:user-2");
   assert.equal(board.components[0]!.components[1]!.custom_id, "pbem:player:game-id:user-1");
 });

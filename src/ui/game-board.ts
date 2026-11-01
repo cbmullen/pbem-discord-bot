@@ -42,7 +42,7 @@ export function buildGameBoard(
         awayPlayerIds.has(player.userId)
           ? {
               type: 2,
-              style: 3,
+              style: 2,
               label: `Mark ${player.username} back`.slice(0, 80),
               custom_id: `pbem:back:${game.id}:${player.userId}`,
             }
@@ -80,7 +80,7 @@ export function buildGameBoard(
         ? `\n\n⏸️ **Away**\n${awayNow.map((player) => {
             const info = away[player.userId]!;
             return `• <@${player.userId}> — ${awayLabel(info.until, now)}`;
-          }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back. Click an away player's green button to mark them back.`
+          }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back. Click an away player's grey button to mark them back.`
         : "") +
       `\nPending: ${pendingUserIds.map((userId) => `<@${userId}>`).join(", ") || "nobody"}`,
     components,

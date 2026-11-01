@@ -99,3 +99,9 @@ test("/pbem-notify configures a user, delivery mode, and quiet hours", () => {
     [["delivery", 3, true], ["quiet-hours", 3, true], ["user", 6, false], ["utc-offset", 3, false]],
   );
 });
+
+test("/pbem-help has no options", () => {
+  const command = commands.find((entry) => entry.name === "pbem-help");
+  assert.ok(command);
+  assert.deepEqual(optionsOf(command), []);
+});
