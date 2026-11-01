@@ -20,13 +20,17 @@ export async function resolveGuildNames(
 ): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   const uncachedIds: string[] = [];
+  const now = Date.now();
+
+  for (const [guildId, cached] of guildNameCache) {
+    if (cached.expiresAt <= now) guildNameCache.delete(guildId);
+  }
 
   for (const guildId of new Set(guildIds)) {
     const cached = guildNameCache.get(guildId);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached) {
       names.set(guildId, cached.name);
     } else {
-      guildNameCache.delete(guildId);
       uncachedIds.push(guildId);
     }
   }
