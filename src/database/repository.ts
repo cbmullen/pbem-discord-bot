@@ -509,6 +509,8 @@ export function openRepository(databaseUrl: string) {
             )
               AND player->>'status' = 'pending'
               AND player->>'pendingSince' = ${reminder.pendingSince}
+              AND (player->>'pendingSince')::timestamptz
+                <= NOW() - game.reminder_days * INTERVAL '1 day'
           )
         ON CONFLICT (game_id, user_id, pending_since)
         DO UPDATE SET claimed_at = NOW()

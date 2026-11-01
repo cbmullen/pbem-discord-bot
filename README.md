@@ -335,9 +335,9 @@ commands once using the application ID and bot token.
    npm run register-commands
    ```
 
-8. Look for the success message that says nine global application commands were
-   registered. If the command reports a Discord error, recheck the application
-   ID/token pair in `.env`; they must belong to the same Discord application.
+8. Check that the script reports successful registration. If it reports a
+   Discord error, recheck the application ID/token pair in `.env`; they must
+   belong to the same Discord application.
 
 The command-registration script needs only the Discord token and application
 ID; the migration command needs `DATABASE_URL`. The deployed Vercel app reads
