@@ -510,8 +510,9 @@ setting notifications, handling away status, and using every command, see the
   congratulations message, removes the active board, and moves the full game
   snapshot and available event history into the archive. This removes the game
   from active commands and frees its name. `/api/public-games`
-  includes completed games plus cumulative wins, games played, completed turns,
-  average turn duration, and average game length. Turn times are recorded from
+  includes the 100 most recently completed games plus cumulative wins, games
+  played, completed turns, average turn duration, and average game length
+  across all archived games. Turn times are recorded from
   when the roster entry became pending until it was marked done; teams share the
   same turn statistics, and a team win counts for every team member. Turn-time
   tracking starts with this update; earlier turns in existing games cannot be

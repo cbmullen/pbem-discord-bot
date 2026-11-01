@@ -1,4 +1,5 @@
 import {
+  getPublicArchiveStatistics,
   listPublicActiveGames,
   listPublicArchivedGames,
 } from "../src/database/repository.js";
@@ -22,13 +23,16 @@ export default {
     }
 
     try {
-      const games = await listPublicActiveGames(databaseUrl);
-      const archives = await listPublicArchivedGames(databaseUrl);
+      const [games, archives, statistics] = await Promise.all([
+        listPublicActiveGames(databaseUrl),
+        listPublicArchivedGames(databaseUrl),
+        getPublicArchiveStatistics(databaseUrl),
+      ]);
       const guildNames = await resolveGuildNames(
         [...games.map((game) => game.guildId), ...archives.map((game) => game.guildId)],
         botToken,
       );
-      const summary = summarizePublicArchives(archives, guildNames);
+      const summary = summarizePublicArchives(archives, guildNames, statistics);
       return publicJsonResponse({
         generatedAt: new Date().toISOString(),
         games: addServerNames(games, guildNames),

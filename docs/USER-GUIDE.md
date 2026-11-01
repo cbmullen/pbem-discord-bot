@@ -250,9 +250,10 @@ Finishes a game and records the result:
 
 The bot posts a public congratulations message, removes the active board, and
 archives the game snapshot and available event history. The game is removed
-from active-game commands and its name becomes available again. Archived games
-and cumulative stats (wins, games played, completed turns, average turn
-duration, and average game length) are included in the public games API.
+from active-game commands and its name becomes available again. The public
+games API includes the 100 most recently completed games and cumulative stats
+(wins, games played, completed turns, average turn duration, and average game
+length) across all archived games.
 Each member of a winning team receives a win in those stats. Historical turn
 times can only be calculated for turns recorded by the bot; older turns cannot
 be reconstructed.

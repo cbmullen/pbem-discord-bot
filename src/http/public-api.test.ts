@@ -195,3 +195,34 @@ test("public archive statistics count shared-team wins for every member without 
     /jill-id|jack-id|private-guild-id|private-game-id|private-creator-id/,
   );
 });
+
+test("public archive summaries keep global statistics separate from recent history", () => {
+  const summary = summarizePublicArchives([], new Map(), {
+    playerStats: [{
+      userId: "private-user-id",
+      username: "Jill",
+      gamesPlayed: 125,
+      wins: 42,
+      completedTurns: 300,
+      averageTurnDurationMs: 60_000,
+    }],
+    totals: {
+      completedGames: 125,
+      averageGameDurationMs: 86_400_000,
+    },
+  });
+
+  assert.deepEqual(summary.completedGames, []);
+  assert.deepEqual(summary.playerStats, [{
+    username: "Jill",
+    gamesPlayed: 125,
+    wins: 42,
+    completedTurns: 300,
+    averageTurnDurationMs: 60_000,
+  }]);
+  assert.deepEqual(summary.totals, {
+    completedGames: 125,
+    averageGameDurationMs: 86_400_000,
+  });
+  assert.doesNotMatch(JSON.stringify(summary), /private-user-id/);
+});

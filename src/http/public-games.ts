@@ -1,4 +1,8 @@
-import type { ArchivedGame, PublicGameStatus } from "../database/repository.js";
+import type {
+  ArchivedGame,
+  PublicArchiveStatistics,
+  PublicGameStatus,
+} from "../database/repository.js";
 import type { Player } from "../game/types.js";
 
 export type NamedPublicGame = Omit<PublicGameStatus, "guildId"> & {
@@ -41,6 +45,7 @@ function playerMembers(player: Player): Array<{ userId: string; username: string
 export function summarizePublicArchives(
   archives: ArchivedGame[],
   guildNames: Map<string, string>,
+  statistics?: PublicArchiveStatistics,
 ): {
   completedGames: PublicCompletedGame[];
   playerStats: PublicPlayerStatistics[];
@@ -69,22 +74,24 @@ export function summarizePublicArchives(
       (sum, player) => sum + (player.totalTurnDurationMs ?? 0),
       0,
     );
-    for (const player of archive.players) {
-      for (const member of playerMembers(player)) {
-        const current = stats.get(member.userId) ?? {
-          username: member.username,
-          gamesPlayed: 0,
-          wins: 0,
-          completedTurns: 0,
-          totalTurnDurationMs: 0,
-        };
-        current.gamesPlayed += 1;
-        if (winnerMembers.some((winnerMember) => winnerMember.userId === member.userId)) {
-          current.wins += 1;
+    if (!statistics) {
+      for (const player of archive.players) {
+        for (const member of playerMembers(player)) {
+          const current = stats.get(member.userId) ?? {
+            username: member.username,
+            gamesPlayed: 0,
+            wins: 0,
+            completedTurns: 0,
+            totalTurnDurationMs: 0,
+          };
+          current.gamesPlayed += 1;
+          if (winnerMembers.some((winnerMember) => winnerMember.userId === member.userId)) {
+            current.wins += 1;
+          }
+          current.completedTurns += player.completedTurns ?? 0;
+          current.totalTurnDurationMs += player.totalTurnDurationMs ?? 0;
+          stats.set(member.userId, current);
         }
-        current.completedTurns += player.completedTurns ?? 0;
-        current.totalTurnDurationMs += player.totalTurnDurationMs ?? 0;
-        stats.set(member.userId, current);
       }
     }
 
@@ -112,18 +119,26 @@ export function summarizePublicArchives(
   const durations = completedGames.map((game) => game.durationMs);
   return {
     completedGames,
-    playerStats: [...stats.values()]
-      .map(({ username, gamesPlayed, wins, completedTurns, totalTurnDurationMs }) => ({
+    playerStats: (statistics
+      ? statistics.playerStats.map(({ username, gamesPlayed, wins, completedTurns, averageTurnDurationMs }) => ({
         username,
         gamesPlayed,
         wins,
         completedTurns,
-        averageTurnDurationMs: completedTurns > 0
-          ? totalTurnDurationMs / completedTurns
-          : null,
+        averageTurnDurationMs,
       }))
+      : [...stats.values()]
+        .map(({ username, gamesPlayed, wins, completedTurns, totalTurnDurationMs }) => ({
+          username,
+          gamesPlayed,
+          wins,
+          completedTurns,
+          averageTurnDurationMs: completedTurns > 0
+            ? totalTurnDurationMs / completedTurns
+            : null,
+        })))
       .sort((left, right) => right.wins - left.wins || left.username.localeCompare(right.username)),
-    totals: {
+    totals: statistics?.totals ?? {
       completedGames: completedGames.length,
       averageGameDurationMs: durations.length > 0
         ? durations.reduce((sum, duration) => sum + duration, 0) / durations.length

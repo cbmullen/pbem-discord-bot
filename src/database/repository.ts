@@ -102,6 +102,24 @@ export interface PublicGameStatus {
   }>;
 }
 
+// shortcut: latest 100 archives, add pagination if older games need browsing.
+const PUBLIC_ARCHIVE_HISTORY_LIMIT = 100;
+
+export interface PublicArchiveStatistics {
+  playerStats: Array<{
+    userId: string;
+    username: string;
+    gamesPlayed: number;
+    wins: number;
+    completedTurns: number;
+    averageTurnDurationMs: number | null;
+  }>;
+  totals: {
+    completedGames: number;
+    averageGameDurationMs: number | null;
+  };
+}
+
 export interface ArchivedGame {
   gameId: string;
   name: string;
@@ -196,8 +214,16 @@ export async function listPublicActiveGames(
   return openRepository(databaseUrl).listPublicGames();
 }
 
-export async function listPublicArchivedGames(databaseUrl: string): Promise<ArchivedGame[]> {
+export async function listPublicArchivedGames(
+  databaseUrl: string,
+): Promise<ArchivedGame[]> {
   return openRepository(databaseUrl).listPublicArchives();
+}
+
+export async function getPublicArchiveStatistics(
+  databaseUrl: string,
+): Promise<PublicArchiveStatistics> {
+  return openRepository(databaseUrl).getPublicArchiveStatistics();
 }
 
 function parseJson<T>(value: T | string): T {
@@ -549,7 +575,8 @@ export function openRepository(databaseUrl: string) {
     async listPublicArchives(): Promise<ArchivedGame[]> {
       const rows = (await sql`
         SELECT * FROM pbem_game_archive
-        ORDER BY completed_at DESC
+        ORDER BY completed_at DESC, game_id DESC
+        LIMIT ${PUBLIC_ARCHIVE_HISTORY_LIMIT}
       `) as ArchiveRow[];
       return rows.map((row) => ({
         gameId: row.game_id,
@@ -567,6 +594,85 @@ export function openRepository(databaseUrl: string) {
         players: parseJson<Player[]>(row.players),
         events: parseJson<Array<Record<string, unknown>>>(row.events),
       }));
+    },
+
+    async getPublicArchiveStatistics(): Promise<PublicArchiveStatistics> {
+      const [totalsRows, playerRows] = await Promise.all([
+        sql`
+          SELECT
+            COUNT(*)::float8 AS completed_games,
+            AVG(GREATEST(
+              0,
+              EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000
+            ))::float8 AS average_game_duration_ms
+          FROM pbem_game_archive
+        `,
+        sql`
+          WITH player_rows AS (
+            SELECT
+              archive.game_id,
+              archive.completed_at,
+              member.user_id,
+              COALESCE(
+                player.value->'notificationUsernames'->>((member.ordinality - 1)::int),
+                player.value->>'username'
+              ) AS username,
+              player.value->>'userId' = archive.winner_user_id AS won,
+              COALESCE((player.value->>'completedTurns')::float8, 0) AS completed_turns,
+              COALESCE((player.value->>'totalTurnDurationMs')::float8, 0) AS total_turn_duration_ms
+            FROM pbem_game_archive AS archive
+            CROSS JOIN LATERAL jsonb_array_elements(archive.players) AS player(value)
+            CROSS JOIN LATERAL jsonb_array_elements_text(
+              CASE
+                WHEN jsonb_typeof(player.value->'notificationUserIds') = 'array'
+                  AND jsonb_array_length(player.value->'notificationUserIds') > 0
+                THEN player.value->'notificationUserIds'
+                ELSE jsonb_build_array(player.value->>'userId')
+              END
+            ) WITH ORDINALITY AS member(user_id, ordinality)
+          )
+          SELECT
+            user_id,
+            (ARRAY_AGG(username ORDER BY completed_at DESC, game_id DESC))[1] AS username,
+            COUNT(*)::float8 AS games_played,
+            COUNT(*) FILTER (WHERE won)::float8 AS wins,
+            SUM(completed_turns)::float8 AS completed_turns,
+            CASE
+              WHEN SUM(completed_turns) > 0
+              THEN (SUM(total_turn_duration_ms) / SUM(completed_turns))::float8
+              ELSE NULL
+            END AS average_turn_duration_ms
+          FROM player_rows
+          GROUP BY user_id
+        `,
+      ]) as [
+        Array<{
+          completed_games: number;
+          average_game_duration_ms: number | null;
+        }>,
+        Array<{
+          user_id: string;
+          username: string;
+          games_played: number;
+          wins: number;
+          completed_turns: number;
+          average_turn_duration_ms: number | null;
+        }>,
+      ];
+      return {
+        playerStats: playerRows.map((row) => ({
+          userId: row.user_id,
+          username: row.username,
+          gamesPlayed: row.games_played,
+          wins: row.wins,
+          completedTurns: row.completed_turns,
+          averageTurnDurationMs: row.average_turn_duration_ms,
+        })),
+        totals: {
+          completedGames: totalsRows[0]?.completed_games ?? 0,
+          averageGameDurationMs: totalsRows[0]?.average_game_duration_ms ?? null,
+        },
+      };
     },
 
     async replaceBoardMessageId(
