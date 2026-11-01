@@ -3,7 +3,6 @@ import {
   GameNameInUseError,
   openRepository,
   type NotificationPreferenceInput,
-  type ReminderDelivery,
   type PlayerRosterChange,
 } from "../database/repository.js";
 import {
@@ -1224,7 +1223,7 @@ async function processNoDbBoardButton(
   }
 
   const message = await getNoDbBoardMessage(channelId, messageId, config.botToken);
-  const state = readNoDbBoardState(message);
+  readNoDbBoardState(message);
   if (!message.components.some((row) =>
     row.components?.some((button) => button.custom_id === customId),
   )) {
@@ -1513,10 +1512,11 @@ async function processBoardInteraction(
     return;
   }
 
-  const result =
-    action === "mode"
-      ? await repository.switchGameMode(gameId, actorId)
-      : await repository.applyPlayerSelection(gameId, playerId ?? "", actorId);
+  if (action === "mode") {
+    await repository.switchGameMode(gameId, actorId);
+  } else {
+    await repository.applyPlayerSelection(gameId, playerId ?? "", actorId);
+  }
   await moveUpdatedBoardToLatest(repository, gameId, config.botToken);
 }
 
