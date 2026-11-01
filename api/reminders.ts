@@ -1,6 +1,7 @@
 import { openRepository } from "../src/database/repository.js";
 import type { DueReminder } from "../src/database/repository.js";
 import { moveUpdatedBoardToLatest } from "../src/discord/interactions.js";
+import { shouldSendScheduledReminder } from "../src/game/reminders.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -21,18 +22,26 @@ async function discordPost(path: string, token: string, body: unknown): Promise<
   return response.json();
 }
 
-async function sendReminder(reminder: DueReminder, botToken: string): Promise<void> {
-  const channel = await discordPost("/users/@me/channels", botToken, {
-    recipient_id: reminder.userId,
-  }) as { id: string };
+export async function sendReminder(reminder: DueReminder, botToken: string): Promise<void> {
   const days = reminder.reminderDays === 1
     ? "1 day"
     : `${reminder.reminderDays} days`;
   const boardUrl = reminder.messageId
     ? `\n[Open the game board](https://discord.com/channels/${reminder.guildId}/${reminder.channelId}/${reminder.messageId})`
     : "";
+  const content = `Reminder: **${reminder.gameName}** has been waiting for your turn for ${days}.${boardUrl}`;
+  if (reminder.delivery === "channel") {
+    await discordPost(`/channels/${reminder.channelId}/messages`, botToken, {
+      content: `<@${reminder.userId}> ${content}`,
+      allowed_mentions: { parse: [], users: [reminder.userId] },
+    });
+    return;
+  }
+  const channel = await discordPost("/users/@me/channels", botToken, {
+    recipient_id: reminder.userId,
+  }) as { id: string };
   await discordPost(`/channels/${channel.id}/messages`, botToken, {
-    content: `Reminder: **${reminder.gameName}** has been waiting for your turn for ${days}.${boardUrl}`,
+    content,
     allowed_mentions: { parse: [] },
   });
 }
@@ -92,13 +101,21 @@ export default {
     } catch (error) {
       console.error("Could not end expired PBEM away records:", error);
     }
-    const dueReminders = await repository.listDueReminders();
+    const now = new Date();
+    const dueReminders = await repository.listDueReminders(now);
     let sent = 0;
     let failed = 0;
 
     for (let index = 0; index < dueReminders.length; index += 5) {
       await Promise.all(
         dueReminders.slice(index, index + 5).map(async (reminder) => {
+          if (!shouldSendScheduledReminder(
+            reminder.delivery,
+            reminder.quietStart,
+            reminder.quietEnd,
+            reminder.utcOffsetMinutes,
+            now,
+          )) return;
           const claimed = await repository.claimReminderDelivery(reminder);
           if (!claimed) return;
 

@@ -90,3 +90,12 @@ test("/pbem-rematch chooses an active game and a new name", () => {
   );
   assert.equal(optionsOf(command)[0]?.autocomplete, true);
 });
+
+test("/pbem-notify configures a user, delivery mode, and quiet hours", () => {
+  const command = commands.find((entry) => entry.name === "pbem-notify");
+  assert.ok(command);
+  assert.deepEqual(
+    optionsOf(command).map((option) => [option.name, option.type, option.required]),
+    [["delivery", 3, true], ["quiet-hours", 3, true], ["user", 6, false], ["utc-offset", 3, false]],
+  );
+});

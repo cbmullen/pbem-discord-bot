@@ -6,9 +6,8 @@
 Notifications and reminders
 - [x] Error reporting to a channel or webhook. You already have a webhook for dependency bumps, so reuse the pattern for failed interactions.
 - [x] Rematches. `/pbem-rematch` starts a new game with the same players and teams.
-- Per-user reminder preferences. A /pbem-notify command to choose DM, channel ping, or none, plus quiet hours or a timezone, so the 09:00 UTC reminder doesn’t wake people.
+- [x] Optional players
+- [x] Per-user reminder preferences. `/pbem-notify` selects DM, channel ping, or none, plus quiet hours and a UTC offset.
+- Auto-cleanup. Use existing webhook to warn about games that have no activity in 7 days. Link to the game so I can delete it.
 - Game notes and links. Let the creator attach a link (a Google Sheet, Tabletop Simulator save, or Dropbox file) or a pinned note to the board. PBEM games often revolve around a shared file.
 - Convert mode. Let a consecutive or simultaneous game be upgraded to both later.
-- Stats command. Average turn time per player, slowest and fastest, and games played.
-- Auto-cleanup. Archive or warn about games with no activity for N days, since the free Neon tier has storage limits.
-Omnipotence Temptations Pestilence

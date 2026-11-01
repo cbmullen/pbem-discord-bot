@@ -246,6 +246,45 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-notify",
+    description: "Set a user's scheduled reminder delivery and quiet hours",
+    options: [
+      {
+        type: 3,
+        name: "delivery",
+        description: "How scheduled reminders are delivered",
+        required: true,
+        choices: [
+          { name: "Direct message", value: "dm" },
+          { name: "Ping in each game channel", value: "channel" },
+          { name: "None", value: "none" },
+        ],
+      },
+      {
+        type: 3,
+        name: "quiet-hours",
+        description: "Quiet window as HH:MM-HH:MM, or off to disable",
+        min_length: 2,
+        max_length: 11,
+        required: true,
+      },
+      {
+        type: 6,
+        name: "user",
+        description: "Server member to configure (defaults to you)",
+        required: false,
+      },
+      {
+        type: 3,
+        name: "utc-offset",
+        description: "UTC offset for quiet hours, such as -07:00 or +05:45",
+        min_length: 6,
+        max_length: 6,
+        required: false,
+      },
+    ],
+  },
+  {
     name: "pbem-list",
     description: "List PBEM games in this server",
   },

@@ -32,19 +32,29 @@ export function buildGameBoard(
   );
   const away = activeAway(snapshot.away, now);
   const awayNow = awayPlayers(players, away, now);
+  const awayPlayerIds = new Set(awayNow.map((player) => player.userId));
   const components: ActionRow[] = [];
 
   for (let index = 0; index < players.length; index += 5) {
     components.push({
       type: 1,
-      components: players.slice(index, index + 5).map((player): ButtonComponent => ({
-        type: 2,
-        style: player.status === "pending" ? 1 : 3,
-        disabled:
-          game.activeMode === "consecutive" && player.status === "pending",
-        label: `${player.username} - ${player.status}`.slice(0, 80),
-        custom_id: `pbem:player:${game.id}:${player.userId}`,
-      })),
+      components: players.slice(index, index + 5).map((player): ButtonComponent =>
+        awayPlayerIds.has(player.userId)
+          ? {
+              type: 2,
+              style: 3,
+              label: `Mark ${player.username} back`.slice(0, 80),
+              custom_id: `pbem:back:${game.id}:${player.userId}`,
+            }
+          : {
+              type: 2,
+              style: player.status === "pending" ? 1 : 3,
+              disabled:
+                game.activeMode === "consecutive" && player.status === "pending",
+              label: `${player.username} - ${player.status}`.slice(0, 80),
+              custom_id: `pbem:player:${game.id}:${player.userId}`,
+            },
+      ),
     });
   }
 
@@ -70,7 +80,7 @@ export function buildGameBoard(
         ? `\n\n⏸️ **Away**\n${awayNow.map((player) => {
             const info = away[player.userId]!;
             return `• <@${player.userId}> — ${awayLabel(info.until, now)}`;
-          }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back.`
+          }).join("\n")}\n\n**Paused** — reminders are disabled until everyone is back. Click an away player's green button to mark them back.`
         : "") +
       `\nPending: ${pendingUserIds.map((userId) => `<@${userId}>`).join(", ") || "nobody"}`,
     components,

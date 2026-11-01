@@ -61,6 +61,30 @@ export interface DueReminder {
   username: string;
   pendingSince: string;
   reminderDays: number;
+  delivery: ReminderDelivery;
+  quietStart: number | null;
+  quietEnd: number | null;
+  utcOffsetMinutes: number | null;
+}
+
+export type ReminderDelivery = "dm" | "channel" | "none";
+
+export interface NotificationPreferenceInput {
+  guildId: string;
+  userId: string;
+  delivery: ReminderDelivery;
+  quietStart: number | null;
+  quietEnd: number | null;
+  utcOffsetMinutes: number | null;
+}
+
+interface NotificationPreferenceRow {
+  guild_id: string;
+  user_id: string;
+  delivery: ReminderDelivery;
+  quiet_start: number | null;
+  quiet_end: number | null;
+  utc_offset_minutes: number | null;
 }
 
 export interface PublicGameStatus {
@@ -351,6 +375,25 @@ export function openRepository(databaseUrl: string) {
       return withAway(rows.map(mapSnapshot));
     },
 
+    async setNotificationPreference(
+      preference: NotificationPreferenceInput,
+    ): Promise<void> {
+      await sql`
+        INSERT INTO pbem_notification_preferences (
+          guild_id, user_id, delivery, quiet_start, quiet_end, utc_offset_minutes
+        ) VALUES (
+          ${preference.guildId}, ${preference.userId}, ${preference.delivery},
+          ${preference.quietStart}, ${preference.quietEnd},
+          ${preference.utcOffsetMinutes}
+        )
+        ON CONFLICT (guild_id, user_id)
+        DO UPDATE SET delivery = EXCLUDED.delivery,
+                      quiet_start = EXCLUDED.quiet_start,
+                      quiet_end = EXCLUDED.quiet_end,
+                      utc_offset_minutes = EXCLUDED.utc_offset_minutes
+      `;
+    },
+
     async listDueReminders(now = new Date()): Promise<DueReminder[]> {
       const rows = (await sql`
         SELECT * FROM pbem_games
@@ -360,24 +403,55 @@ export function openRepository(databaseUrl: string) {
         [...new Set(rows.map((row) => row.guild_id))],
         now,
       );
-      return rows.flatMap((row) => {
+      const dueReminders = rows.flatMap((row) => {
         const snapshot = mapSnapshot(row);
         return getDueReminderPlayers(
           snapshot.players,
           snapshot.game.reminderDays,
           now,
           awayByGuild.get(snapshot.game.guildId),
-        ).map((player) => ({
-          gameId: snapshot.game.id,
-          gameName: snapshot.game.name,
-          guildId: snapshot.game.guildId,
-          channelId: snapshot.game.channelId,
-          messageId: snapshot.game.messageId,
-          userId: player.userId,
-          username: player.username,
-          pendingSince: player.pendingSince!,
-          reminderDays: snapshot.game.reminderDays,
-        }));
+        ).flatMap((player) =>
+          (player.notificationUserIds ?? [player.userId]).map((userId) => ({
+            gameId: snapshot.game.id,
+            gameName: snapshot.game.name,
+            guildId: snapshot.game.guildId,
+            channelId: snapshot.game.channelId,
+            messageId: snapshot.game.messageId,
+            userId,
+            username: player.username,
+            pendingSince: player.pendingSince!,
+            reminderDays: snapshot.game.reminderDays,
+            delivery: "dm" as const,
+            quietStart: null,
+            quietEnd: null,
+            utcOffsetMinutes: null,
+          })),
+        );
+      });
+      if (dueReminders.length === 0) return [];
+
+      const preferences = (await sql`
+        SELECT guild_id, user_id, delivery, quiet_start, quiet_end, utc_offset_minutes
+        FROM pbem_notification_preferences
+        WHERE guild_id = ANY(${[...new Set(dueReminders.map(({ guildId }) => guildId))]}::text[])
+      `) as NotificationPreferenceRow[];
+      const preferencesByUser = new Map(
+        preferences.map((preference) => [
+          `${preference.guild_id}:${preference.user_id}`,
+          preference,
+        ]),
+      );
+      return dueReminders.map((reminder) => {
+        const preference = preferencesByUser.get(`${reminder.guildId}:${reminder.userId}`);
+        return preference
+          ? {
+              ...reminder,
+              delivery: preference.delivery,
+              quietStart: preference.quiet_start,
+              quietEnd: preference.quiet_end,
+              utcOffsetMinutes: preference.utc_offset_minutes,
+            }
+          : reminder;
       });
     },
 
@@ -400,11 +474,16 @@ export function openRepository(databaseUrl: string) {
                 jsonb_build_object('userId', away.user_id)
               )
           )
-          AND game.players @> ${JSON.stringify([{
-            userId: reminder.userId,
-            status: "pending",
-            pendingSince: reminder.pendingSince,
-          }])}::jsonb
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(game.players) AS player
+            WHERE (
+              player->>'userId' = ${reminder.userId}
+              OR player->'notificationUserIds' ? ${reminder.userId}
+            )
+              AND player->>'status' = 'pending'
+              AND player->>'pendingSince' = ${reminder.pendingSince}
+          )
         ON CONFLICT (game_id, user_id, pending_since)
         DO UPDATE SET claimed_at = NOW()
         WHERE pbem_reminder_deliveries.sent_at IS NULL

@@ -134,7 +134,8 @@ contains a password, so treat it like a secret.
     Do not put it in a public GitHub file, chat, screenshot, or source code.
 
 You do **not** need to create database tables or run SQL yourself. Database
-schema changes (including the `pbem_away` table used by `/pbem-away`) are
+schema changes (including the `pbem_away` table used by `/pbem-away` and the
+`pbem_notification_preferences` table used by `/pbem-notify`) are
 applied by the versioned `npm run migrate:db` command rather than by Discord
 requests. Run it from the repository root with `DATABASE_URL`
 set in `.env` before deploying schema changes or using a new database.
@@ -347,7 +348,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-rematch`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
+`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-rematch`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`, `/pbem-notify`,
 `/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
 `/pbem-back` are listed.
 
@@ -358,10 +359,11 @@ where the bot is installed, open the slash-command picker and check that
 2. Run `/pbem`.
 3. Enter a distinctive game name and choose `consecutive`, `simultaneous`, or
    `both`.
-4. Use the private Discord user picker to select at least one player, then
-   submit the selection.
+4. Use the private Discord user picker to select players, or choose **Skip for
+   now** to create an empty game and add players or teams later with
+   `/pbem-players` or `/pbem-teams`.
 5. Confirm that a board message appears in the same channel, with the selected
-   player buttons and the pending list.
+   player buttons and the pending list (or an empty roster if skipped).
 6. Click a status button and confirm the board updates. For a `both` game, also
    test the mode-switch button.
 7. Run `/pbem-players`, choose the game and add a server member; then repeat
@@ -487,10 +489,11 @@ local test is finished.
   these games. Unlike database-backed boards, very closely timed clicks can
   race because Discord does not offer conditional message edits.
 - `/pbem name mode` creates a game in the current channel and presents a private
-  Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game.
-  Optionally set `reminder-days` (0–365) to privately DM pending players once
-  they reach that many days pending. It defaults to `0`, which disables
-  automated reminders.
+  Discord user picker. Choose 1–25 non-bot players, or 1–24 for a `both` game,
+  or skip the picker to add players or teams later with `/pbem-players` or
+  `/pbem-teams`. Optionally set `reminder-days` (0–365) to privately DM pending
+  players once they reach that many days pending. It defaults to `0`, which
+  disables automated reminders.
 - `/pbem-remind game` offers active games in the server as autocomplete
   suggestions, then manually mentions pending players in that game's channel.
   The command can be run in any channel in the server.
@@ -525,7 +528,19 @@ local test is finished.
   display name as one player. Away and reminder behavior remains unchanged.
 - `/pbem-reminders game days` changes the automated reminder threshold for an
   active game anywhere in the server. Set `days` to 0 to disable reminders.
-  Reminders are checked daily at 09:00 UTC and sent privately by DM.
+  Reminders are checked daily at 09:00 UTC.
+- `/pbem-notify [user] delivery quiet-hours [utc-offset]` sets per-server
+  scheduled reminder preferences for a member; any server member can update
+  another member's settings, and `user` defaults to the command invoker.
+  `delivery` can be `dm`, `channel` (ping that member in each game's channel),
+  or `none`. `quiet-hours` is `off` or a range such as `22:00-07:00`, using a
+  24-hour clock. A range requires a fixed offset such as `-07:00` or `+05:45`;
+  offsets do not follow daylight-saving changes. The daily 09:00 UTC check
+  skips reminders that fall inside quiet hours; if 09:00 UTC always falls
+  inside that recurring window, reminders remain skipped until the settings or
+  window changes. These settings affect scheduled reminders only; board
+  mentions and manual `/pbem-remind` are unchanged. Users without saved
+  preferences continue to receive scheduled reminders by DM.
 - `/pbem-delete game` offers active games in the server as autocomplete
   suggestions. Select one to review a confirmation, then remove the game and
   its board. Any server member can confirm deletion. The command can be run in
@@ -537,19 +552,19 @@ local test is finished.
   the player stays away until `/pbem-back`.
 - `/pbem-back [player]` clears a player's away status. `player` defaults to you.
 - While anyone in a game is away, that game is **paused**: its board says so,
-  the away player's button turns grey and reads `Away until <date>` (clicking it
-  privately explains how to return), and **no reminders** (automated or
-  `/pbem-remind`) are sent to anyone in that game. Turns are never skipped: other
-  players' buttons keep working and the away player's status is left untouched.
-  A game resumes when nobody in it is away. A return date ends the pause
-  automatically; the daily 09:00 UTC job tidies up and refreshes the board.
+  the away player's status button becomes a green **Mark <player> back** button
+  that any player can click, and **no reminders** (automated or `/pbem-remind`)
+  are sent to anyone in that game. Turns are never skipped. A game resumes when
+  nobody in it is away. A return date ends the pause automatically; the daily
+  09:00 UTC job tidies up and refreshes the board.
 - `/pbem-list` privately lists games in the server, including active-game
   mode/player/pending counts and any pending setups.
 - `/pbem-delete-all` shows a confirmation before permanently deleting every
   game record in the current server, including pending setups. Any server
   member can confirm; the bot also attempts to remove each existing board.
 - Automated reminders are checked daily at 09:00 UTC. Each player receives at
-  most one DM per pending turn after the game's configured day threshold. DM
+  most one scheduled notification per pending turn after the game's configured
+  day threshold, using their saved DM, channel-ping, or none preference. DM
   delivery depends on the player's Discord privacy settings.
 - A game name is reserved while its setup or active game record exists. Failed
   setup attempts are removed, and deleting an active game frees the name.

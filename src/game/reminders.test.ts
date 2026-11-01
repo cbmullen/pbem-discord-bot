@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getDueReminderPlayers } from "./reminders.js";
+import {
+  getDueReminderPlayers,
+  isInQuietHours,
+  parseClockTime,
+  parseUtcOffset,
+  shouldSendScheduledReminder,
+} from "./reminders.js";
 import type { Player } from "./types.js";
 
 const players: Player[] = [
@@ -51,6 +57,31 @@ test("a player exactly at the day threshold is eligible", () => {
       .map((player) => player.userId),
     ["due"],
   );
+});
+
+test("quiet hours use the configured UTC offset and include overnight ranges", () => {
+  const quietHours = {
+    start: parseClockTime("22:00")!,
+    end: parseClockTime("07:00")!,
+    utcOffsetMinutes: parseUtcOffset("-07:00")!,
+  };
+  assert.equal(isInQuietHours(new Date("2026-11-01T06:00:00.000Z"), quietHours), true);
+  assert.equal(isInQuietHours(new Date("2026-11-01T15:00:00.000Z"), quietHours), false);
+});
+
+test("quiet-hour time and offset inputs reject invalid values", () => {
+  assert.equal(parseClockTime("24:00"), undefined);
+  assert.equal(parseClockTime("9:30"), undefined);
+  assert.equal(parseUtcOffset("+14:15"), undefined);
+  assert.equal(parseUtcOffset("-12:15"), undefined);
+  assert.equal(parseUtcOffset("+05:45"), 345);
+});
+
+test("scheduled reminders honor none and defer delivery during quiet hours", () => {
+  const now = new Date("2026-11-01T06:00:00.000Z");
+  assert.equal(shouldSendScheduledReminder("none", null, null, null, now), false);
+  assert.equal(shouldSendScheduledReminder("dm", 22 * 60, 7 * 60, -420, now), false);
+  assert.equal(shouldSendScheduledReminder("channel", 22 * 60, 7 * 60, -420, new Date("2026-11-01T15:00:00.000Z")), true);
 });
 
 test("no reminders go out while anyone in the game is away", () => {

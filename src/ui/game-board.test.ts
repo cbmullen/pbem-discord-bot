@@ -51,12 +51,18 @@ test("board components fit Discord's five action rows at maximum roster sizes", 
   );
 });
 
+test("a game with no players can be created and populated later", () => {
+  const board = buildGameBoard(makeSnapshot("consecutive", 0));
+  assert.match(board.content, /Pending: nobody$/);
+  assert.deepEqual(board.components, []);
+});
+
 test("pending player buttons remain clickable in simultaneous mode", () => {
   const simultaneous = buildGameBoard(makeSnapshot("both", 2, "simultaneous"));
   assert.equal(simultaneous.components.at(0)?.components.at(0)?.disabled, false);
 });
 
-test("away status is shown beneath the game title without changing player buttons", () => {
+test("away status provides back buttons in place of away players' status buttons", () => {
   const now = new Date("2026-10-31T12:00:00.000Z");
   const snapshot = {
     ...makeSnapshot("consecutive", 3),
@@ -67,9 +73,28 @@ test("away status is shown beneath the game title without changing player button
   assert.match(board.content, /<@user-0> — Away until 10 Nov/);
   assert.match(board.content, /<@user-2> — Away \(no return date\)/);
   assert.match(board.content, /reminders are disabled until everyone is back/);
-  assert.equal(board.components[0]!.components[0]!.custom_id, "pbem:player:game-id:user-0");
-  assert.equal(board.components[0]!.components[0]!.label, "Player 0 - pending");
-  assert.equal(board.components[0]!.components[0]!.style, 1);
+  assert.match(board.content, /Click an away player's green button to mark them back/);
+  assert.equal(board.components[0]!.components[0]!.custom_id, "pbem:back:game-id:user-0");
+  assert.equal(board.components[0]!.components[0]!.label, "Mark Player 0 back");
+  assert.equal(board.components[0]!.components[0]!.style, 3);
+  assert.equal(board.components[0]!.components[2]!.custom_id, "pbem:back:game-id:user-2");
+  assert.equal(board.components[0]!.components[1]!.custom_id, "pbem:player:game-id:user-1");
+});
+
+test("back buttons do not increase the board's action-row count", () => {
+  const base = makeSnapshot("both", 24);
+  const away = Object.fromEntries(
+    base.players.map((player) => [player.userId, { until: null }]),
+  );
+  const board = buildGameBoard({ ...base, away });
+  assert.equal(board.components.length, 5);
+  assert.equal(
+    board.components.reduce((total, row) => total + row.components.length, 0),
+    25,
+  );
+  const buttons = board.components.flatMap((row) => row.components);
+  assert.equal(buttons.filter((button) => button.custom_id.startsWith("pbem:back:")).length, 24);
+  assert.equal(buttons.filter((button) => button.custom_id.startsWith("pbem:mode:")).length, 1);
 });
 
 test("the board shows no away section after an away record expires", () => {

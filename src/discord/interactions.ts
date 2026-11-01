@@ -2,6 +2,8 @@ import { createPublicKey, randomUUID, verify } from "node:crypto";
 import {
   GameNameInUseError,
   openRepository,
+  type NotificationPreferenceInput,
+  type ReminderDelivery,
   type PlayerRosterChange,
 } from "../database/repository.js";
 import {
@@ -11,6 +13,7 @@ import {
   parseAwayUntil,
 } from "../game/away.js";
 import { PlayerRosterError } from "../game/players.js";
+import { parseClockTime, parseUtcOffset } from "../game/reminders.js";
 import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
@@ -274,6 +277,20 @@ function interactionUserSelect(
         placeholder: "Select players",
         min_values: 1,
         max_values: maxPlayers,
+      },
+    ],
+  };
+}
+
+function skipPlayerSelectionButton(gameId: string): Record<string, unknown> {
+  return {
+    type: 1,
+    components: [
+      {
+        type: 2,
+        style: 2,
+        label: "Skip for now",
+        custom_id: `pbem:setup-skip:${gameId}`,
       },
     ],
   };
@@ -728,8 +745,11 @@ async function createGameDraft(
     });
     const maxPlayers = mode === "both" ? 24 : 25;
     await editOriginal(interaction, config, {
-      content: `Choose 1-${maxPlayers} players for **${gameName}**. The first selected player starts in consecutive mode. Automated reminders: ${reminderDays === 0 ? "off" : `after ${reminderDays} days pending`}.`,
-      components: [interactionUserSelect(gameId, maxPlayers)],
+      content: `Choose 1-${maxPlayers} players for **${gameName}**, or skip and add players or teams later with \`/pbem-players\` or \`/pbem-teams\`. The first selected player starts in consecutive mode. Automated reminders: ${reminderDays === 0 ? "off" : `after ${reminderDays} days pending`}.`,
+      components: [
+        interactionUserSelect(gameId, maxPlayers),
+        skipPlayerSelectionButton(gameId),
+      ],
     });
   } catch (error) {
     if (!(error instanceof GameNameInUseError)) {
@@ -1008,6 +1028,7 @@ async function setupGameFromUserPicker(
   interaction: InteractionPayload,
   config: RuntimeConfig,
   gameId: string,
+  skipSelection = false,
 ): Promise<void> {
   const creatorId = interactionUserId(interaction);
   if (!creatorId || !interaction.guild_id || !interaction.channel_id) {
@@ -1038,7 +1059,7 @@ async function setupGameFromUserPicker(
     }
     const selected = collectSelectedPlayers(interaction);
     const maxPlayers = draft.game.mode === "both" ? 24 : 25;
-    if (selected.length === 0 || selected.length > maxPlayers) {
+    if ((!skipSelection && selected.length === 0) || selected.length > maxPlayers) {
       await repository.releaseDraft(gameId);
       await editOriginal(interaction, config, {
         content:
@@ -1310,7 +1331,12 @@ async function processBack(
   }
   const targetId = optionValue(interaction, "player") ?? actorId;
   const repository = openRepository(config.databaseUrl);
-  const wasAway = await repository.clearAway(guildId, targetId);
+  const { wasAway, names, failed } = await clearAwayAndRefresh(
+    repository,
+    config,
+    guildId,
+    targetId,
+  );
   if (!wasAway) {
     await editOriginal(interaction, config, {
       content: `<@${targetId}> is not marked as away.`,
@@ -1319,7 +1345,6 @@ async function processBack(
     return;
   }
 
-  const { names, failed } = await refreshBoardsForPlayer(repository, config, guildId, targetId);
   const lines = [`<@${targetId}> is back.`];
   if (names.length > 0) {
     lines.push(
@@ -1333,6 +1358,23 @@ async function processBack(
     content: lines.join("\n"),
     allowed_mentions: { parse: [] },
   });
+}
+
+async function clearAwayAndRefresh(
+  repository: ReturnType<typeof openRepository>,
+  config: RuntimeConfig,
+  guildId: string,
+  userId: string,
+): Promise<{ wasAway: boolean; names: string[]; failed: string[] }> {
+  const wasAway = await repository.clearAway(guildId, userId);
+  if (!wasAway) return { wasAway, names: [], failed: [] };
+  const { names, failed } = await refreshBoardsForPlayer(
+    repository,
+    config,
+    guildId,
+    userId,
+  );
+  return { wasAway, names, failed };
 }
 
 async function processBoardInteraction(
@@ -1359,6 +1401,19 @@ async function processBoardInteraction(
     current.game.guildId !== guildId ||
     current.game.channelId !== channelId
   ) {
+    return;
+  }
+
+  if (action === "back") {
+    if (!playerId || !current.players.some((player) => player.userId === playerId)) {
+      return;
+    }
+    const awayInfo = current.away?.[playerId];
+    if (!awayInfo || !activeAway({ [playerId]: awayInfo })[playerId]) {
+      await moveUpdatedBoardToLatest(repository, gameId, config.botToken);
+      return;
+    }
+    await clearAwayAndRefresh(repository, config, guildId, playerId);
     return;
   }
 
@@ -1460,6 +1515,14 @@ async function prepareGameover(
     });
     return;
   }
+  if (snapshot.players.length === 0) {
+    await editOriginal(interaction, config, {
+      content: `**${snapshot.game.name.replaceAll("@", "@\u200b")}** has no players yet. Add players or teams with \`/pbem-players\` or \`/pbem-teams\` before ending the game.`,
+      components: [],
+      allowed_mentions: { parse: [] },
+    });
+    return;
+  }
   await editOriginal(interaction, config, {
     content: `Are you sure you want to end **${snapshot.game.name.replaceAll("@", "@\u200b")}**? Would you like to start a rematch first? Run \`/pbem-rematch\` with this game and a new name, then return here. Otherwise, continue to choose the winner or cancel.`,
     ...gameoverConfirmation(snapshot.game.id),
@@ -1478,6 +1541,14 @@ async function processGameoverConfirmation(
     await editOriginal(interaction, config, {
       content: "That game is no longer active. Run `/pbem-gameover` again.",
       components: [],
+    });
+    return;
+  }
+  if (snapshot.players.length === 0) {
+    await editOriginal(interaction, config, {
+      content: `**${snapshot.game.name.replaceAll("@", "@\u200b")}** has no players yet. Add players or teams with \`/pbem-players\` or \`/pbem-teams\` before ending the game.`,
+      components: [],
+      allowed_mentions: { parse: [] },
     });
     return;
   }
@@ -1720,6 +1791,48 @@ async function updateGameReminderDays(
     content: reminderDays === 0
       ? `Automated reminders are now off for **${snapshot.game.name}**.`
       : `Automated reminders for **${snapshot.game.name}** will be sent after ${reminderDays} day${reminderDays === 1 ? "" : "s"} pending.`,
+  });
+}
+
+function formatClockTime(minute: number): string {
+  return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+}
+
+function formatUtcOffset(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  const absolute = Math.abs(minutes);
+  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+}
+
+async function saveNotificationSettings(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  preference: Omit<NotificationPreferenceInput, "guildId">,
+  targetName: string,
+): Promise<void> {
+  if (!interaction.guild_id) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-notify` in a server.",
+    });
+    return;
+  }
+  await openRepository(config.databaseUrl).setNotificationPreference({
+    ...preference,
+    guildId: interaction.guild_id,
+  });
+  const deliveryText = preference.delivery === "channel"
+    ? "ping them in each game channel"
+    : preference.delivery === "none"
+      ? "send no scheduled reminders"
+      : "send scheduled reminders by DM";
+  const quietText = preference.quietStart === null ||
+      preference.quietEnd === null ||
+      preference.utcOffsetMinutes === null
+    ? "Quiet hours are off."
+    : `Quiet hours are ${formatClockTime(preference.quietStart)}-${formatClockTime(preference.quietEnd)} ${formatUtcOffset(preference.utcOffsetMinutes)}; reminders are deferred to the next daily run.`;
+  await editOriginal(interaction, config, {
+    content: `Saved settings for **${targetName.replaceAll("@", "@\u200b")}**: ${deliveryText}. ${quietText} Manual \`/pbem-remind\` and board mentions are unchanged.`,
+    allowed_mentions: { parse: [] },
   });
 }
 
@@ -2021,6 +2134,92 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-notify") {
+      const guildId = interaction.guild_id;
+      const actorId = interactionUserId(interaction);
+      const delivery = optionValue(interaction, "delivery");
+      const quietInput = optionValue(interaction, "quiet-hours")?.trim();
+      const offsetInput = optionValue(interaction, "utc-offset")?.trim();
+      const requestedUserId = optionValue(interaction, "user");
+      const resolvedUser = requestedUserId
+        ? interaction.data?.resolved?.users?.[requestedUserId]
+        : undefined;
+      if (!guildId || !actorId) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-notify` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (delivery !== "dm" && delivery !== "channel" && delivery !== "none") {
+        return immediateResponse(4, {
+          content: "Choose DM, channel ping, or none for scheduled reminders.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (
+        requestedUserId &&
+        (!resolvedUser || resolvedUser.id !== requestedUserId || resolvedUser.bot)
+      ) {
+        return immediateResponse(4, {
+          content: "Choose a non-bot server member for the notification settings.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (!quietInput) {
+        return immediateResponse(4, {
+          content: "Set quiet-hours to `off` or provide a time range such as `22:00-07:00`.",
+          flags: EPHEMERAL,
+        });
+      }
+
+      let quietStart: number | null = null;
+      let quietEnd: number | null = null;
+      let utcOffsetMinutes: number | null = null;
+      if (quietInput.toLowerCase() !== "off") {
+        const range = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/.exec(quietInput);
+        const start = range ? parseClockTime(range[1]!) : undefined;
+        const end = range ? parseClockTime(range[2]!) : undefined;
+        const offset = offsetInput ? parseUtcOffset(offsetInput) : undefined;
+        if (
+          start === undefined ||
+          end === undefined ||
+          start === end ||
+          offset === undefined
+        ) {
+          return immediateResponse(4, {
+            content: "Use quiet-hours `off`, or a valid time range such as `22:00-07:00` and a UTC offset such as `-07:00`.",
+            flags: EPHEMERAL,
+          });
+        }
+        quietStart = start;
+        quietEnd = end;
+        utcOffsetMinutes = offset;
+      } else if (offsetInput) {
+        return immediateResponse(4, {
+          content: "Omit utc-offset when quiet-hours is `off`.",
+          flags: EPHEMERAL,
+        });
+      }
+
+      const targetId = requestedUserId ?? actorId;
+      const targetName = resolvedUser?.global_name?.trim() ||
+        resolvedUser?.username ||
+        (targetId === actorId
+          ? interaction.member?.user?.global_name?.trim() ||
+            interaction.member?.user?.username ||
+            interaction.user?.global_name?.trim() ||
+            interaction.user?.username
+          : undefined) ||
+        targetId;
+      const task = saveNotificationSettings(
+        interaction,
+        config,
+        { userId: targetId, delivery, quietStart, quietEnd, utcOffsetMinutes },
+        targetName,
+      );
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-status") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || gameName.length > 80 || !interaction.guild_id) {
@@ -2097,6 +2296,17 @@ async function handleInteraction(
 
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id ?? "";
+    if (customId.startsWith("pbem:setup-skip:")) {
+      const gameId = customId.slice("pbem:setup-skip:".length);
+      if (!gameId || interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This player-selection skip is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = setupGameFromUserPicker(interaction, config, gameId, true);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
     if (customId.startsWith("pbem:gameover-confirm:")) {
       const gameId = customId.slice("pbem:gameover-confirm:".length);
       if (!gameId || interaction.data?.component_type !== 2) {
@@ -2197,7 +2407,7 @@ async function handleInteraction(
       const task = processDeleteAllGames(interaction, config);
       return scheduledResponse(6, undefined, task, schedule, interaction, config);
     }
-    if (!gameId || (action !== "player" && action !== "away" && action !== "mode")) {
+    if (!gameId || (action !== "player" && action !== "away" && action !== "mode" && action !== "back")) {
       return immediateResponse(4, { content: "This button is invalid.", flags: EPHEMERAL });
     }
     const task = processBoardInteraction(interaction, config, action, gameId, playerId);

@@ -42,7 +42,10 @@ export function addPlayers(
   return [
     ...state.players,
     ...additions.map((player, index): Player => {
-      const status = state.activeMode === "simultaneous" ? "pending" : "done";
+      const status =
+        state.activeMode === "simultaneous" || state.players.length + index === 0
+          ? "pending"
+          : "done";
       return {
         ...player,
         position: state.players.length + index,
@@ -83,7 +86,10 @@ export function addTeam(
     selected.add(member.userId);
   }
 
-  const status = state.activeMode === "simultaneous" ? "pending" : "done";
+  const status =
+    state.activeMode === "simultaneous" || state.players.length === 0
+      ? "pending"
+      : "done";
   const team: Player = {
     userId: members[0]!.userId,
     username: members.map((member) => member.username).join(" / "),

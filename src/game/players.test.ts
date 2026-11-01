@@ -62,6 +62,39 @@ test("a shared team is one player with both members in the notification list", (
   );
 });
 
+test("teams can be added to a game created with no players", () => {
+  const firstTeam = addTeam(
+    { mode: "consecutive", activeMode: "consecutive", players: [] },
+    [
+      { userId: "user-3", username: "Jill" },
+      { userId: "user-4", username: "Jack" },
+    ],
+    now,
+  );
+  const teams = addTeam(
+    { mode: "consecutive", activeMode: "consecutive", players: firstTeam },
+    [
+      { userId: "user-5", username: "Rose" },
+      { userId: "user-6", username: "Tom" },
+    ],
+    now,
+  );
+  assert.deepEqual(teams.map((team) => team.notificationUserIds), [
+    ["user-3", "user-4"],
+    ["user-5", "user-6"],
+  ]);
+  assert.deepEqual(teams.map((team) => team.status), ["pending", "done"]);
+});
+
+test("the first player added to an empty consecutive game starts pending", () => {
+  const added = addPlayers(
+    { mode: "consecutive", activeMode: "consecutive", players: [] },
+    [{ userId: "user-1", username: "Player 1" }],
+    now,
+  );
+  assert.equal(added[0]?.status, "pending");
+});
+
 test("shared teams require multiple new members and use one roster slot", () => {
   assert.throws(
     () => addTeam(

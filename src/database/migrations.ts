@@ -87,6 +87,32 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
       ON pbem_game_archive (completed_at DESC)
     `;
   },
+  async (sql) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS pbem_notification_preferences (
+        guild_id text NOT NULL,
+        user_id text NOT NULL,
+        delivery text NOT NULL CHECK (delivery IN ('dm', 'channel', 'none')),
+        quiet_start smallint,
+        quiet_end smallint,
+        utc_offset_minutes smallint,
+        PRIMARY KEY (guild_id, user_id),
+        CHECK (
+          (quiet_start IS NULL AND quiet_end IS NULL AND utc_offset_minutes IS NULL)
+          OR (
+            quiet_start IS NOT NULL
+            AND quiet_end IS NOT NULL
+            AND utc_offset_minutes IS NOT NULL
+            AND
+            quiet_start BETWEEN 0 AND 1439
+            AND quiet_end BETWEEN 0 AND 1439
+            AND quiet_start <> quiet_end
+            AND utc_offset_minutes BETWEEN -720 AND 840
+          )
+        )
+      )
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {
