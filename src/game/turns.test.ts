@@ -22,6 +22,23 @@ test("consecutive games start with only the first player pending", () => {
   );
 });
 
+test("new games preserve shared-team membership while resetting turn state", () => {
+  const team = {
+    userId: "jill",
+    username: "Jill / Jack",
+    notificationUserIds: ["jill", "jack"],
+    notificationUsernames: ["Jill", "Jack"],
+  };
+  const [player] = createInitialPlayers([team], "consecutive", now);
+  assert.deepEqual(player, {
+    ...team,
+    position: 0,
+    status: "pending",
+    pendingSince: now,
+    lastUpdatedAt: now,
+  });
+});
+
 test("simultaneous games reset everyone to pending when the last player finishes", () => {
   const initial = createInitialPlayers(selected, "simultaneous", now);
   const afterOne = selectPlayer(

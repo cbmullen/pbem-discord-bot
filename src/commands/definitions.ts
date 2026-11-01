@@ -223,6 +223,29 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-rematch",
+    description: "Start a new game with the same players and teams",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 3,
+        name: "name",
+        description: "Name for the new game",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+      },
+    ],
+  },
+  {
     name: "pbem-list",
     description: "List PBEM games in this server",
   },

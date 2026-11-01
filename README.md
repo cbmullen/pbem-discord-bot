@@ -347,7 +347,7 @@ The command-registration script can safely be run again when slash-command
 definitions change. It replaces the application's global command definitions.
 New global commands can take a little while to appear in Discord. In a server
 where the bot is installed, open the slash-command picker and check that
-`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
+`/pbem`, `/pbem-nodb`, `/pbem-players`, `/pbem-teams`, `/pbem-gameover`, `/pbem-rematch`, `/pbem-status`, `/pbem-remind`, `/pbem-reminders`,
 `/pbem-delete`, `/pbem-list`, `/pbem-delete-all`, `/pbem-away`, and
 `/pbem-back` are listed.
 
@@ -496,16 +496,21 @@ local test is finished.
   The command can be run in any channel in the server.
 - `/pbem-status game` privately shows an active game's mode, player statuses,
   start time, and automated reminder setting.
-- `/pbem-gameover game` asks you to choose the winning player or shared team,
-  posts a public congratulations message, removes the active board, and moves
-  the full game snapshot and available event history into the archive. This
-  removes the game from active commands and frees its name. `/api/public-games`
+- `/pbem-gameover game` asks you to confirm (and suggests `/pbem-rematch` first),
+  then choose the winning player or shared team. It posts a public
+  congratulations message, removes the active board, and moves the full game
+  snapshot and available event history into the archive. This removes the game
+  from active commands and frees its name. `/api/public-games`
   includes completed games plus cumulative wins, games played, completed turns,
   average turn duration, and average game length. Turn times are recorded from
   when the roster entry became pending until it was marked done; teams share the
   same turn statistics, and a team win counts for every team member. Turn-time
   tracking starts with this update; earlier turns in existing games cannot be
   reconstructed from the limited event history.
+- `/pbem-rematch game name` starts a fresh game in the original game channel
+  with the same players and shared teams. It keeps the original game mode and
+  reminder setting, resets turn statuses and statistics, and requires a new
+  name that is not already in use on this server.
 - `/pbem-players game action` adds server members to or removes existing players
   from an active game. Added players join the end of the roster: they start
   done in consecutive mode or pending (and mentioned) in simultaneous mode.

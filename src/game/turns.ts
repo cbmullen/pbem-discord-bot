@@ -61,7 +61,10 @@ function updatePlayer(
 }
 
 export function createInitialPlayers(
-  selected: Array<Pick<Player, "userId" | "username">>,
+  selected: Array<Pick<
+    Player,
+    "userId" | "username" | "notificationUserIds" | "notificationUsernames"
+  >>,
   mode: ActiveMode,
   now: string,
 ): Player[] {

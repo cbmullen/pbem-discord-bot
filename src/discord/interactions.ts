@@ -518,6 +518,30 @@ function gameWinnerPicker(snapshot: GameSnapshot): Record<string, unknown> {
   };
 }
 
+function gameoverConfirmation(gameId: string): Record<string, unknown> {
+  return {
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 1,
+            label: "Continue to winner selection",
+            custom_id: `pbem:gameover-confirm:${gameId}`,
+          },
+          {
+            type: 2,
+            style: 2,
+            label: "Cancel",
+            custom_id: `pbem:gameover-cancel:${gameId}`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function deleteAllConfirmation(): Record<string, unknown> {
   return {
     components: [
@@ -1437,6 +1461,27 @@ async function prepareGameover(
     return;
   }
   await editOriginal(interaction, config, {
+    content: `Are you sure you want to end **${snapshot.game.name.replaceAll("@", "@\u200b")}**? Would you like to start a rematch first? Run \`/pbem-rematch\` with this game and a new name, then return here. Otherwise, continue to choose the winner or cancel.`,
+    ...gameoverConfirmation(snapshot.game.id),
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function processGameoverConfirmation(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameId: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const snapshot = await openRepository(config.databaseUrl).getSnapshot(gameId);
+  if (!guildId || !snapshot || snapshot.game.guildId !== guildId || snapshot.game.status !== "active") {
+    await editOriginal(interaction, config, {
+      content: "That game is no longer active. Run `/pbem-gameover` again.",
+      components: [],
+    });
+    return;
+  }
+  await editOriginal(interaction, config, {
     content: `Choose the winning player or team for **${snapshot.game.name.replaceAll("@", "@\u200b")}**. This archives the game and removes its active board.`,
     ...gameWinnerPicker(snapshot),
     allowed_mentions: { parse: [] },
@@ -1497,6 +1542,108 @@ async function processGameoverSelection(
   });
 }
 
+async function processGameRematch(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  sourceName: string,
+  rematchName: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const creatorId = interactionUserId(interaction);
+  if (!guildId || !creatorId) {
+    await editOriginal(interaction, config, {
+      content: "Use `/pbem-rematch` in a server.",
+    });
+    return;
+  }
+
+  const repository = openRepository(config.databaseUrl);
+  const source = await repository.getActiveGameByNameInGuild(guildId, sourceName);
+  if (!source) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+    });
+    return;
+  }
+
+  let gameId: string | undefined;
+  let boardMessageId: string | undefined;
+  let gameActivated = false;
+  try {
+    const players: SelectedPlayer[] = source.players.map((player) => ({
+      userId: player.userId,
+      username: player.username,
+      ...(player.notificationUserIds
+        ? { notificationUserIds: player.notificationUserIds }
+        : {}),
+      ...(player.notificationUsernames
+        ? { notificationUsernames: player.notificationUsernames }
+        : {}),
+    }));
+    gameId = await repository.createDraft({
+      name: rematchName,
+      mode: source.game.mode,
+      activeMode: source.game.activeMode,
+      reminderDays: source.game.reminderDays,
+      guildId,
+      channelId: source.game.channelId,
+      createdBy: creatorId,
+    });
+    const draft = await repository.claimDraft(gameId, creatorId);
+    if (!draft) throw new Error("The rematch setup could not be claimed.");
+
+    const now = new Date().toISOString();
+    const initialSnapshot: GameSnapshot = {
+      game: { ...draft.game, activeMode: source.game.activeMode, status: "active" },
+      players: createInitialPlayers(players, source.game.activeMode, now),
+      away: await repository.getAwayMap(
+        guildId,
+        players.flatMap((player) => [
+          player.userId,
+          ...(player.notificationUserIds ?? []),
+        ]),
+      ),
+    };
+    const board = await postChannelMessage(
+      source.game.channelId,
+      config.botToken,
+      buildGameBoard(initialSnapshot, true),
+    );
+    boardMessageId = board.id;
+    const snapshot = await repository.activateGame(gameId, players, board.id);
+    gameActivated = true;
+    await editOriginal(interaction, config, {
+      content: `Started **${snapshot.game.name.replaceAll("@", "@\u200b")}** with the same players and teams as **${source.game.name.replaceAll("@", "@\u200b")}**.`,
+      components: [],
+      allowed_mentions: { parse: [] },
+    });
+  } catch (error) {
+    if (!(error instanceof GameNameInUseError)) {
+      console.error("Could not start PBEM rematch:", error);
+    }
+    if (gameActivated) return;
+    if (boardMessageId) {
+      try {
+        await deleteChannelMessage(source.game.channelId, boardMessageId, config.botToken);
+      } catch (deleteError) {
+        console.error("Could not remove the incomplete rematch board:", deleteError);
+      }
+    }
+    if (gameId) {
+      try {
+        await repository.deleteDraft(gameId);
+      } catch (deleteError) {
+        console.error("Could not remove the incomplete rematch:", deleteError);
+      }
+    }
+    await editOriginal(interaction, config, {
+      content: error instanceof GameNameInUseError
+        ? "A game with that name already exists on this server. Choose a different name."
+        : "The rematch could not be started. Please try `/pbem-rematch` again.",
+    });
+  }
+}
+
 async function autocompleteActiveGame(
   interaction: InteractionPayload,
   config: RuntimeConfig,
@@ -1511,6 +1658,7 @@ async function autocompleteActiveGame(
       "pbem-teams",
       "pbem-players",
       "pbem-gameover",
+      "pbem-rematch",
     ].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
     !interaction.guild_id
@@ -1823,6 +1971,25 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-rematch") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      const rematchName = optionValue(interaction, "name")?.trim();
+      if (
+        !gameName ||
+        gameName.length > 80 ||
+        !rematchName ||
+        rematchName.length > 80 ||
+        !interaction.guild_id
+      ) {
+        return immediateResponse(4, {
+          content: "Choose an active game, provide a new name of 1-80 characters, and use `/pbem-rematch` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processGameRematch(interaction, config, gameName, rematchName);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-remind") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || !interaction.guild_id) {
@@ -1930,6 +2097,30 @@ async function handleInteraction(
 
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id ?? "";
+    if (customId.startsWith("pbem:gameover-confirm:")) {
+      const gameId = customId.slice("pbem:gameover-confirm:".length);
+      if (!gameId || interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This game-over confirmation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processGameoverConfirmation(interaction, config, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
+    if (customId.startsWith("pbem:gameover-cancel:")) {
+      const gameId = customId.slice("pbem:gameover-cancel:".length);
+      if (!gameId || interaction.data?.component_type !== 2) {
+        return immediateResponse(4, {
+          content: "This game-over cancellation is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      return immediateResponse(7, {
+        content: "Game over cancelled.",
+        components: [],
+      });
+    }
     if (customId.startsWith("pbem:gameover:")) {
       const [, action, gameId] = customId.split(":");
       if (action !== "gameover" || !gameId || interaction.data?.component_type !== 3) {

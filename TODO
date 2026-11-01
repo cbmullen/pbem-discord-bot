@@ -5,8 +5,8 @@
 - [x] Game end and archive. Add “finish game” with a final summary, rather than only deleting. That keeps stats and frees the name.
 Notifications and reminders
 - [x] Error reporting to a channel or webhook. You already have a webhook for dependency bumps, so reuse the pattern for failed interactions.
+- [x] Rematches. `/pbem-rematch` starts a new game with the same players and teams.
 - Per-user reminder preferences. A /pbem-notify command to choose DM, channel ping, or none, plus quiet hours or a timezone, so the 09:00 UTC reminder doesn’t wake people.
-- Templates. /pbem-clone to start a new game with the same players, useful for rematches.
 - Game notes and links. Let the creator attach a link (a Google Sheet, Tabletop Simulator save, or Dropbox file) or a pinned note to the board. PBEM games often revolve around a shared file.
 - Convert mode. Let a consecutive or simultaneous game be upgraded to both later.
 - Stats command. Average turn time per player, slowest and fastest, and games played.

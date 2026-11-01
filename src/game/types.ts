@@ -35,6 +35,8 @@ export interface Player {
 export interface SelectedPlayer {
   userId: string;
   username: string;
+  notificationUserIds?: string[];
+  notificationUsernames?: string[];
 }
 
 export interface AwayInfo {

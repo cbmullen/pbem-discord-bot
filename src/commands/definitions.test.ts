@@ -80,3 +80,13 @@ test("/pbem-gameover chooses an active game", () => {
   );
   assert.equal(optionsOf(command)[0]?.autocomplete, true);
 });
+
+test("/pbem-rematch chooses an active game and a new name", () => {
+  const command = commands.find((entry) => entry.name === "pbem-rematch");
+  assert.ok(command);
+  assert.deepEqual(
+    optionsOf(command).map((option) => [option.name, option.type, option.required]),
+    [["game", 3, true], ["name", 3, true]],
+  );
+  assert.equal(optionsOf(command)[0]?.autocomplete, true);
+});

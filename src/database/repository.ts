@@ -44,6 +44,7 @@ interface GameRow {
 export interface NewGame {
   name: string;
   mode: GameMode;
+  activeMode?: ActiveMode;
   reminderDays: number;
   guildId: string;
   channelId: string;
@@ -262,7 +263,7 @@ export function openRepository(databaseUrl: string) {
       `;
       const id = randomUUID();
       const activeMode: ActiveMode =
-        input.mode === "both" ? "consecutive" : input.mode;
+        input.activeMode ?? (input.mode === "both" ? "consecutive" : input.mode);
       try {
         await sql`
           INSERT INTO pbem_games (
