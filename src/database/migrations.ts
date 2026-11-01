@@ -197,6 +197,12 @@ const migrations: Array<(sql: NeonClient) => Promise<void>> = [
           total_turn_duration_ms = EXCLUDED.total_turn_duration_ms
     `;
   },
+  async (sql) => {
+    await sql`
+      CREATE INDEX IF NOT EXISTS pbem_processed_interactions_created_at
+      ON pbem_processed_interactions (created_at)
+    `;
+  },
 ];
 
 export async function migrateDatabase(databaseUrl: string): Promise<void> {

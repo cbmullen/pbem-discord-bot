@@ -7,6 +7,36 @@ import { getPublicArchiveStatistics, openRepository } from "./repository.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
+test("interaction deduplication cleanup only removes IDs older than one day", async (t) => {
+  if (!databaseUrl) {
+    t.skip("Set TEST_DATABASE_URL to run the Neon integration test.");
+    return;
+  }
+  await migrateDatabase(databaseUrl);
+  const repository = openRepository(databaseUrl);
+  const oldId = `old-interaction-${randomUUID()}`;
+  const recentId = `recent-interaction-${randomUUID()}`;
+  const sql = neon(databaseUrl);
+
+  try {
+    assert.equal(await repository.claimInteraction(oldId), true);
+    assert.equal(await repository.claimInteraction(recentId), true);
+    await sql`
+      UPDATE pbem_processed_interactions
+      SET created_at = NOW() - INTERVAL '2 days'
+      WHERE interaction_id = ${oldId}
+    `;
+    assert.equal(await repository.sweepExpiredInteractions(), 1);
+    assert.equal(await repository.claimInteraction(oldId), true);
+    assert.equal(await repository.claimInteraction(recentId), false);
+  } finally {
+    await sql`
+      DELETE FROM pbem_processed_interactions
+      WHERE interaction_id = ANY(${[oldId, recentId]}::text[])
+    `;
+  }
+});
+
 test("reminder delivery claims can be retried after failure and stop after sending", async (t) => {
   if (!databaseUrl) {
     t.skip("Set TEST_DATABASE_URL to run the Neon integration test.");

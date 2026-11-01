@@ -235,7 +235,7 @@ behavior as `/pbem-back`. Clearing away status does not change the player's
 pending/done status.
 
 An away date also ends automatically at 00:00 UTC on the selected return date.
-The daily job removes expired records and refreshes the affected boards.
+The daily job removes expired away records and refreshes the affected boards.
 
 ## Finishing or deleting games
 

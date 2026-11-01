@@ -565,7 +565,8 @@ setting notifications, handling away status, and using every command, see the
   that any player can click, and **no reminders** (automated or `/pbem-remind`)
   are sent to anyone in that game. Turns are never skipped. A game resumes when
   nobody in it is away. A return date ends the pause automatically; the daily
-  09:00 UTC job tidies up and refreshes the board.
+  09:00 UTC job tidies up and refreshes the board. A separate job removes
+  expired interaction deduplication records every Sunday at 09:00 UTC.
 - `/pbem-list` privately lists games in the server, including active-game
   mode/player/pending counts and any pending setups.
 - `/pbem-delete-all` shows a confirmation before permanently deleting every

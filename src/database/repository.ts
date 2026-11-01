@@ -293,17 +293,21 @@ export function openRepository(databaseUrl: string) {
   const repository = {
     async claimInteraction(interactionId: string): Promise<boolean> {
       const rows = (await sql`
-        WITH expired AS (
-          DELETE FROM pbem_processed_interactions
-          WHERE created_at < NOW() - INTERVAL '1 day'
-          RETURNING interaction_id
-        )
         INSERT INTO pbem_processed_interactions (interaction_id)
         VALUES (${interactionId})
         ON CONFLICT (interaction_id) DO NOTHING
         RETURNING interaction_id
       `) as Array<{ interaction_id: string }>;
       return rows.length > 0;
+    },
+
+    async sweepExpiredInteractions(): Promise<number> {
+      const rows = (await sql`
+        DELETE FROM pbem_processed_interactions
+        WHERE created_at < NOW() - INTERVAL '1 day'
+        RETURNING interaction_id
+      `) as Array<{ interaction_id: string }>;
+      return rows.length;
     },
 
     async createDraft(input: NewGame, now = new Date().toISOString()) {

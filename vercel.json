@@ -9,12 +9,19 @@
     },
     "api/reminders.ts": {
       "maxDuration": 30
+    },
+    "api/cleanup-interactions.ts": {
+      "maxDuration": 30
     }
   },
   "crons": [
     {
       "path": "/api/reminders",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cleanup-interactions",
+      "schedule": "0 9 * * 0"
     }
   ]
 }
