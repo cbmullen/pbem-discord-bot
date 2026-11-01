@@ -58,6 +58,31 @@ export const commands = [
     ],
   },
   {
+    name: "pbem-players",
+    description: "Add or remove players from an active game",
+    options: [
+      {
+        type: 3,
+        name: "game",
+        description: "Choose an active game in this server",
+        min_length: 1,
+        max_length: 80,
+        required: true,
+        autocomplete: true,
+      },
+      {
+        type: 3,
+        name: "action",
+        description: "Add players or remove players from the game",
+        required: true,
+        choices: [
+          { name: "Add players", value: "add" },
+          { name: "Remove players", value: "remove" },
+        ],
+      },
+    ],
+  },
+  {
     name: "pbem-remind",
     description: "Manually remind pending players for a game in this server",
     options: [

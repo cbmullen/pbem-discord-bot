@@ -5,6 +5,7 @@ import {
   selectPlayer,
   switchMode,
 } from "../game/turns.js";
+import { addPlayers, removePlayers } from "../game/players.js";
 import { getDueReminderPlayers } from "../game/reminders.js";
 import { activeAway } from "../game/away.js";
 import type {
@@ -94,6 +95,10 @@ export function groupAwayRows(rows: AwayRow[]): Map<string, AwayMap> {
 export interface TransitionResult extends GameSnapshot {
   eventType: string;
 }
+
+export type PlayerRosterChange =
+  | { type: "add"; players: SelectedPlayer[] }
+  | { type: "remove"; userIds: string[] };
 
 export class GameNameInUseError extends Error {
   constructor() {
@@ -554,6 +559,56 @@ export function openRepository(databaseUrl: string) {
 
     async switchGameMode(gameId: string, actorId: string): Promise<TransitionResult> {
       return applyTransition(gameId, "switch_mode", null, actorId);
+    },
+
+    async updateGamePlayers(
+      gameId: string,
+      change: PlayerRosterChange,
+      actorId: string,
+    ): Promise<GameSnapshot> {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const row = await getRow(gameId);
+        if (!row || row.status !== "active") {
+          throw new Error("This game is no longer active.");
+        }
+        const snapshot = mapSnapshot(row);
+        const state = {
+          mode: snapshot.game.mode,
+          activeMode: snapshot.game.activeMode,
+          players: snapshot.players,
+        };
+        const now = new Date().toISOString();
+        const players = change.type === "add"
+          ? addPlayers(state, change.players, now)
+          : removePlayers(state, change.userIds, now);
+        const event = change.type === "add"
+          ? {
+              type: "players_added",
+              actorId,
+              userIds: change.players.map((player) => player.userId),
+              createdAt: now,
+            }
+          : {
+              type: "players_removed",
+              actorId,
+              userIds: change.userIds,
+              createdAt: now,
+            };
+        const events = [
+          ...parseJson<Array<Record<string, unknown>>>(row.events),
+          event,
+        ].slice(-100);
+        const updated = (await sql`
+          UPDATE pbem_games
+          SET players = ${JSON.stringify(players)}::jsonb,
+              events = ${JSON.stringify(events)}::jsonb,
+              version = version + 1
+          WHERE id = ${gameId} AND status = 'active' AND version = ${row.version}
+          RETURNING *
+        `) as GameRow[];
+        if (updated[0]) return (await withAway([mapSnapshot(updated[0])]))[0]!;
+      }
+      throw new Error("Game changed repeatedly; please try again.");
     },
 
   };

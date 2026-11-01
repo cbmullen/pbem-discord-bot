@@ -7,6 +7,7 @@ interface CommandOption {
   description: string;
   type: number;
   required?: boolean;
+  autocomplete?: boolean;
 }
 
 function optionsOf(command: (typeof commands)[number]): CommandOption[] {
@@ -48,4 +49,14 @@ test("/pbem-nodb creates a game with name and mode but no database settings", ()
     optionsOf(command).map((option) => [option.name, option.type, option.required]),
     [["name", 3, true], ["mode", 3, true]],
   );
+});
+
+test("/pbem-players chooses an active game and an add or remove action", () => {
+  const command = commands.find((entry) => entry.name === "pbem-players");
+  assert.ok(command);
+  assert.deepEqual(
+    optionsOf(command).map((option) => [option.name, option.type, option.required]),
+    [["game", 3, true], ["action", 3, true]],
+  );
+  assert.equal(optionsOf(command)[0]?.autocomplete, true);
 });

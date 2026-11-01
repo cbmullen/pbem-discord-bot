@@ -2,6 +2,7 @@ import { createPublicKey, randomUUID, verify } from "node:crypto";
 import {
   GameNameInUseError,
   openRepository,
+  type PlayerRosterChange,
 } from "../database/repository.js";
 import {
   activeAway,
@@ -9,6 +10,7 @@ import {
   isGamePaused,
   parseAwayUntil,
 } from "../game/away.js";
+import { PlayerRosterError } from "../game/players.js";
 import { createInitialPlayers } from "../game/turns.js";
 import type { GameMode, GameSnapshot, SelectedPlayer } from "../game/types.js";
 import { buildGameBoard } from "../ui/game-board.js";
@@ -216,6 +218,44 @@ function interactionUserSelect(
         placeholder: "Select players",
         min_values: 1,
         max_values: maxPlayers,
+      },
+    ],
+  };
+}
+
+function playerManagementPicker(
+  snapshot: GameSnapshot,
+  action: "add" | "remove",
+): Record<string, unknown> {
+  if (action === "add") {
+    const maxPlayers = snapshot.game.mode === "both" ? 24 : 25;
+    return {
+      type: 1,
+      components: [
+        {
+          type: 5,
+          custom_id: `pbem:players:add:${snapshot.game.id}`,
+          placeholder: "Select server members to add",
+          min_values: 1,
+          max_values: maxPlayers - snapshot.players.length,
+        },
+      ],
+    };
+  }
+  return {
+    type: 1,
+    components: [
+      {
+        type: 3,
+        custom_id: `pbem:players:remove:${snapshot.game.id}`,
+        placeholder: "Select players to remove",
+        min_values: 1,
+        max_values: snapshot.players.length,
+        options: snapshot.players.map((player) => ({
+          label: player.username.slice(0, 100),
+          description: `Currently ${player.status}`,
+          value: player.userId,
+        })),
       },
     ],
   };
@@ -568,13 +608,122 @@ async function createGameDraft(
   }
 }
 
+async function preparePlayerManagement(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  gameName: string,
+  action: "add" | "remove",
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  if (!guildId) throw new Error("Player management requires a server.");
+  const snapshot = await openRepository(config.databaseUrl)
+    .getActiveGameByNameInGuild(guildId, gameName);
+  if (!snapshot) {
+    await editOriginal(interaction, config, {
+      content: "That game is not active in this server.",
+      components: [],
+    });
+    return;
+  }
+  if (action === "add") {
+    const maxPlayers = snapshot.game.mode === "both" ? 24 : 25;
+    if (snapshot.players.length >= maxPlayers) {
+      await editOriginal(interaction, config, {
+        content: `This game already has the maximum of ${maxPlayers} players.`,
+        components: [],
+      });
+      return;
+    }
+  }
+  await editOriginal(interaction, config, {
+    content: `Choose players to ${action} in **${snapshot.game.name.replaceAll("@", "@\u200b")}**.`,
+    components: [playerManagementPicker(snapshot, action)],
+    allowed_mentions: { parse: [] },
+  });
+}
+
+async function processPlayerManagementSelection(
+  interaction: InteractionPayload,
+  config: RuntimeConfig,
+  action: "add" | "remove",
+  gameId: string,
+): Promise<void> {
+  const guildId = interaction.guild_id;
+  const actorId = interactionUserId(interaction);
+  if (!guildId || !actorId) throw new Error("Player selection is missing server context.");
+
+  const repository = openRepository(config.databaseUrl);
+  const snapshot = await repository.getSnapshot(gameId);
+  if (
+    !snapshot ||
+    snapshot.game.status !== "active" ||
+    snapshot.game.guildId !== guildId ||
+    !snapshot.game.messageId
+  ) {
+    await editOriginal(interaction, config, {
+      content: "That game is no longer active in this server.",
+      components: [],
+    });
+    return;
+  }
+
+  let change: PlayerRosterChange;
+  let selectedIds: string[];
+  if (action === "add") {
+    const values = interaction.data?.values ?? [];
+    const players = collectSelectedPlayers(interaction);
+    if (players.length === 0 || players.length !== values.length) {
+      await editOriginal(interaction, config, {
+        content: "Select at least one non-bot server member to add.",
+        components: [],
+      });
+      return;
+    }
+    change = { type: "add", players };
+    selectedIds = players.map((player) => player.userId);
+  } else {
+    selectedIds = interaction.data?.values ?? [];
+    if (selectedIds.length === 0) {
+      await editOriginal(interaction, config, {
+        content: "Select at least one current game player to remove.",
+        components: [],
+      });
+      return;
+    }
+    change = { type: "remove", userIds: selectedIds };
+  }
+
+  let updated: GameSnapshot;
+  try {
+    updated = await repository.updateGamePlayers(gameId, change, actorId);
+  } catch (error) {
+    if (!(error instanceof PlayerRosterError)) throw error;
+    await editOriginal(interaction, config, {
+      content: error.message,
+      components: [],
+    });
+    return;
+  }
+  const newlyPending = action === "add"
+    ? updated.players
+      .filter((player) => selectedIds.includes(player.userId) && player.status === "pending")
+      .map((player) => player.userId)
+    : [];
+  await moveUpdatedBoardToLatest(repository, gameId, config.botToken, newlyPending);
+  await editOriginal(interaction, config, {
+    content: `${action === "add" ? "Added" : "Removed"} ${selectedIds.length} player${selectedIds.length === 1 ? "" : "s"} ${action === "add" ? "to" : "from"} **${snapshot.game.name}**.`,
+    components: [],
+    allowed_mentions: { parse: [] },
+  });
+}
+
 function collectSelectedPlayers(interaction: InteractionPayload): SelectedPlayer[] {
   const values = interaction.data?.values ?? [];
   const users = interaction.data?.resolved?.users ?? {};
   const selected: SelectedPlayer[] = [];
   for (const userId of values) {
     const user = users[userId];
-    if (!user || user.bot || !user.id || !user.username) continue;
+    if (!user || user.bot || user.id !== userId || !user.username) continue;
     selected.push({
       userId: user.id,
       username: user.global_name ?? user.username,
@@ -740,6 +889,7 @@ export async function moveUpdatedBoardToLatest(
   repository: ReturnType<typeof openRepository>,
   gameId: string,
   token: string,
+  announceUserIds: string[] = [],
 ): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const snapshot = await repository.getSnapshot(gameId);
@@ -752,10 +902,16 @@ export async function moveUpdatedBoardToLatest(
     }
 
     const previousMessageId = snapshot.game.messageId;
+    const board = buildGameBoard(snapshot);
+    if (announceUserIds.length > 0) {
+      board.allowed_mentions.users = snapshot.players
+        .filter((player) => player.status === "pending" && announceUserIds.includes(player.userId))
+        .map((player) => player.userId);
+    }
     const nextMessage = await postChannelMessage(
       snapshot.game.channelId,
       token,
-      buildGameBoard(snapshot),
+      board,
     );
     const replaced = await repository.replaceBoardMessageId(
       gameId,
@@ -1018,6 +1174,7 @@ async function autocompleteActiveGame(
       "pbem-reminders",
       "pbem-remind",
       "pbem-status",
+      "pbem-players",
     ].includes(interaction.data?.name ?? "") ||
     focusedOption?.name !== "game" ||
     !interaction.guild_id
@@ -1280,6 +1437,25 @@ async function handleInteraction(
       return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
     }
 
+    if (commandName === "pbem-players") {
+      const gameName = optionValue(interaction, "game")?.trim();
+      const action = optionValue(interaction, "action");
+      if (!gameName || gameName.length > 80 || (action !== "add" && action !== "remove")) {
+        return immediateResponse(4, {
+          content: "Choose an active game and select whether to add or remove players.",
+          flags: EPHEMERAL,
+        });
+      }
+      if (!interaction.guild_id) {
+        return immediateResponse(4, {
+          content: "Use `/pbem-players` in a server.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = preparePlayerManagement(interaction, config, gameName, action);
+      return scheduledResponse(5, { flags: EPHEMERAL }, task, schedule, interaction, config);
+    }
+
     if (commandName === "pbem-remind") {
       const gameName = optionValue(interaction, "game")?.trim();
       if (!gameName || !interaction.guild_id) {
@@ -1382,6 +1558,22 @@ async function handleInteraction(
 
   if (interaction.type === 3) {
     const customId = interaction.data?.custom_id ?? "";
+    if (customId.startsWith("pbem:players:")) {
+      const [, , action, gameId] = customId.split(":");
+      if (
+        !gameId ||
+        (action !== "add" && action !== "remove") ||
+        (action === "add" && interaction.data?.component_type !== 5) ||
+        (action === "remove" && interaction.data?.component_type !== 3)
+      ) {
+        return immediateResponse(4, {
+          content: "This player selection is invalid.",
+          flags: EPHEMERAL,
+        });
+      }
+      const task = processPlayerManagementSelection(interaction, config, action, gameId);
+      return scheduledResponse(6, undefined, task, schedule, interaction, config);
+    }
     if (interaction.data?.component_type === 5) {
       const [, action, gameId] = customId.split(":");
       if (action !== "select" || !gameId) {
