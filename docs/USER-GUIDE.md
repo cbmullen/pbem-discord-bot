@@ -126,9 +126,11 @@ not included.
 
 ### `/pbem-help`
 
-Privately displays a short introduction and a link to this guide:
+Use `/pbem-help command` to get a private summary of a specific command, or
+leave `command` empty to receive the link to the full
 [PBEM Discord Bot User Guide](https://cbmullen-inc.github.io/public-notebook/pbem-status/user-guide.html).
-It does not require the database.
+Command-specific help also includes the full guide link. This command does not
+require the database.
 
 ### `/pbem-status game`
 

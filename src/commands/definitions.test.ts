@@ -8,6 +8,7 @@ interface CommandOption {
   type: number;
   required?: boolean;
   autocomplete?: boolean;
+  choices?: Array<{ value: string }>;
 }
 
 function optionsOf(command: (typeof commands)[number]): CommandOption[] {
@@ -100,8 +101,12 @@ test("/pbem-notify configures a user, delivery mode, and quiet hours", () => {
   );
 });
 
-test("/pbem-help has no options", () => {
+test("/pbem-help has an optional command choice", () => {
   const command = commands.find((entry) => entry.name === "pbem-help");
   assert.ok(command);
-  assert.deepEqual(optionsOf(command), []);
+  const [option] = optionsOf(command);
+  assert.ok(option);
+  assert.deepEqual([option.name, option.type, option.required], ["command", 3, false]);
+  assert.equal(option.choices?.length, 16);
+  assert.ok(option.choices?.some(({ value }) => value === "pbem-help"));
 });

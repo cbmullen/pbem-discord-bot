@@ -26,9 +26,44 @@ import {
 import type { NoDbDiscordMessage } from "../ui/nodb-game-board.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
+const USER_GUIDE_URL = "https://cbmullen-inc.github.io/public-notebook/pbem-status/user-guide.html";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const EPHEMERAL = 1 << 6;
 const MAX_INTERACTION_AGE_MS = 5 * 60 * 1000;
+
+const COMMAND_HELP: Record<string, string> = {
+  pbem: "`/pbem name mode [reminder-days]` creates a database-backed game. Choose players in the picker or skip to add players or teams later; reminder days defaults to 0 (off).",
+  "pbem-nodb": "`/pbem-nodb name mode` creates a board-only game with no database storage. Deleting its board loses the game; database-backed management commands cannot manage it.",
+  "pbem-players": "`/pbem-players game action` adds individual server members to, or removes roster entries from, an active game. Use autocomplete to select the game.",
+  "pbem-teams": "`/pbem-teams game action` adds a shared team of 2–8 server members or removes a team. Each team occupies one roster entry and turn.",
+  "pbem-remind": "`/pbem-remind game` immediately pings pending players in the game's channel. It ignores reminder thresholds and notification preferences, but is unavailable while the game is paused by an away player.",
+  "pbem-reminders": "`/pbem-reminders game days` sets the scheduled reminder threshold from 0 to 365 days. Set 0 to disable; reminders are checked daily at 09:00 UTC.",
+  "pbem-delete": "`/pbem-delete game` asks for confirmation, then permanently deletes the active game and attempts to remove its board.",
+  "pbem-status": "`/pbem-status game` privately shows the active game's roster, turn mode, pending statuses, start time, reminder setting, and away status.",
+  "pbem-away": "`/pbem-away [player] [until]` marks you or another member away across their active games. `until` is an optional YYYY-MM-DD return date in UTC; any away player pauses reminders for their games.",
+  "pbem-back": "`/pbem-back [player]` clears your or another member's away status across the server. Any player can also use the grey board button; turn status is unchanged.",
+  "pbem-gameover": "`/pbem-gameover game` confirms the game is ending, then lets you choose the winning player or team. The game is archived and its active board removed.",
+  "pbem-rematch": "`/pbem-rematch game name` starts a new game in the original channel with the same players, teams, mode, and reminder threshold. Turn statuses and statistics reset.",
+  "pbem-notify": "`/pbem-notify delivery quiet-hours [user] [utc-offset]` configures scheduled reminders for you or another member. Quiet hours use HH:MM-HH:MM and require a fixed UTC offset; settings do not affect manual reminders or board mentions.",
+  "pbem-list": "`/pbem-list` privately lists this server's database-backed games, including setup drafts, mode, roster counts, reminder threshold, and channel.",
+  "pbem-delete-all": "`/pbem-delete-all` asks for confirmation, then permanently deletes all database-backed game records in this server, including pending setups. Archived games are not deleted.",
+  "pbem-help": "`/pbem-help [command]` shows help for a selected command. Leave `command` empty to get the complete user guide link.",
+};
+
+export function commandHelpContent(command?: string): string {
+  if (!command) {
+    return [
+      "**PBEM Discord Bot User Guide**",
+      "Learn how to create games, manage players and teams, configure reminders and notifications, and use the other commands:",
+      USER_GUIDE_URL,
+    ].join("\n\n");
+  }
+  const help = COMMAND_HELP[command];
+  if (!help) {
+    return `I don't have help for that command. Choose a PBEM command from the \`command\` option or leave it empty for the full guide: ${USER_GUIDE_URL}`;
+  }
+  return `**Help: /${command}**\n${help}\n\nFull guide: ${USER_GUIDE_URL}`;
+}
 
 interface DiscordUser {
   id?: string;
@@ -2459,11 +2494,7 @@ async function processClaimedInteraction(
   }
   if (interaction.type === 2 && interaction.data?.name === "pbem-help") {
     await editOriginal(interaction, config, {
-      content: [
-        "**PBEM Discord Bot User Guide**",
-        "Learn how to create games, manage players and teams, configure reminders and notifications, and use the other commands:",
-        "https://cbmullen-inc.github.io/public-notebook/pbem-status/user-guide.html",
-      ].join("\n\n"),
+      content: commandHelpContent(optionValue(interaction, "command")),
       allowed_mentions: { parse: [] },
     });
     return;

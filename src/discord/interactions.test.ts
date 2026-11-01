@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import {
   activeGameChoices,
+  commandHelpContent,
   handleDiscordRequest,
   splitMessage,
   verifyDiscordSignature,
@@ -40,6 +41,13 @@ test("active game autocomplete filters games and caps choices at 25", () => {
 
 test("game-list message splitting rejects entries longer than its limit", () => {
   assert.throws(() => splitMessage("12345678", 7), /exceeds the Discord message limit/);
+});
+
+test("/pbem-help gives command-specific help or the full guide link", () => {
+  assert.match(commandHelpContent("pbem-teams"), /2–8 server members/);
+  assert.match(commandHelpContent("pbem-teams"), /user-guide\.html/);
+  assert.match(commandHelpContent(), /^\*\*PBEM Discord Bot User Guide\*\*/);
+  assert.match(commandHelpContent(), /user-guide\.html/);
 });
 
 function signedRequest(body: Buffer, timestamp = Math.floor(Date.now() / 1000).toString()): Request {
@@ -126,7 +134,7 @@ test("signed Discord ping requests receive the required pong response", async ()
   }
 });
 
-test("/pbem-help replies ephemerally with the user guide without database access", async () => {
+test("/pbem-help replies ephemerally with general or command-specific help without database access", async () => {
   const previous = {
     token: process.env.DISCORD_BOT_TOKEN,
     applicationId: process.env.DISCORD_APPLICATION_ID,
@@ -164,7 +172,21 @@ test("/pbem-help replies ephemerally with the user guide without database access
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
     await Promise.all(tasks);
-    assert.equal(calls.length, 1);
+    const selectedResponse = await handleDiscordRequest(
+      signedRequest(Buffer.from(JSON.stringify({
+        ...interaction,
+        id: "selected-help-interaction",
+        data: {
+          name: "pbem-help",
+          options: [{ name: "command", value: "pbem-teams" }],
+        },
+      }))),
+      (task) => tasks.push(task),
+    );
+    assert.equal(selectedResponse.status, 200);
+    assert.deepEqual(await selectedResponse.json(), { type: 5, data: { flags: 64 } });
+    await Promise.all(tasks);
+    assert.equal(calls.length, 2);
     assert.equal(
       calls[0]?.url,
       "https://discord.com/api/v10/webhooks/test-application/test-interaction-token/messages/@original",
@@ -177,6 +199,9 @@ test("/pbem-help replies ephemerally with the user guide without database access
       ].join("\n\n"),
       allowed_mentions: { parse: [] },
     });
+    const selectedHelp = String(JSON.parse(String(calls[1]?.init?.body)).content);
+    assert.match(selectedHelp, /^\*\*Help: \/pbem-teams\*\*/);
+    assert.match(selectedHelp, /2–8 server members/);
   } finally {
     globalThis.fetch = previous.fetch;
     if (previous.token === undefined) delete process.env.DISCORD_BOT_TOKEN;
