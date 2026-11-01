@@ -52,6 +52,13 @@ test("/pbem-nodb creates a game with name and mode but no database settings", ()
   );
 });
 
+test("/pbem notes that teams are added after game creation", () => {
+  const command = commands.find((entry) => entry.name === "pbem");
+  assert.ok(command);
+  assert.match(command.description, /no native teams/i);
+  assert.match(command.description, /\/pbem-teams after creation/);
+});
+
 test("/pbem-players chooses an active game and an add or remove action", () => {
   const command = commands.find((entry) => entry.name === "pbem-players");
   assert.ok(command);

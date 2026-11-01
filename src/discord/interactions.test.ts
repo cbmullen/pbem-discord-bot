@@ -45,6 +45,8 @@ test("game-list message splitting rejects entries longer than its limit", () => 
 });
 
 test("/pbem-help gives command-specific help or the full guide link", () => {
+  assert.match(commandHelpContent("pbem"), /no native teams/i);
+  assert.match(commandHelpContent("pbem"), /use `\/pbem-teams` to add them/);
   assert.match(commandHelpContent("pbem-teams"), /2–8 server members/);
   assert.match(commandHelpContent("pbem-teams"), /user-guide\.html/);
   assert.match(commandHelpContent(), /^\*\*PBEM Discord Bot User Guide\*\*/);

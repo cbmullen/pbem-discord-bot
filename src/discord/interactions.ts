@@ -32,7 +32,7 @@ const EPHEMERAL = 1 << 6;
 const MAX_INTERACTION_AGE_MS = 5 * 60 * 1000;
 
 const COMMAND_HELP: Record<string, string> = {
-  pbem: "`/pbem name mode [reminder-days]` creates a database-backed game. Choose players in the picker or skip to add players or teams later; reminder days defaults to 0 (off).",
+  pbem: "`/pbem name mode [reminder-days]` creates a database-backed game. Discord has no native teams; create the game first, then use `/pbem-teams` to add them. Choose players in the picker or skip to add players or teams later; reminder days defaults to 0 (off).",
   "pbem-nodb": "`/pbem-nodb name mode` creates a board-only game with no database storage. Deleting its board loses the game; database-backed management commands cannot manage it.",
   "pbem-players": "`/pbem-players game action` adds individual server members to, or removes roster entries from, an active game. Use autocomplete to select the game.",
   "pbem-teams": "`/pbem-teams game action` adds a shared team of 2–8 server members or removes a team. Each team occupies one roster entry and turn.",

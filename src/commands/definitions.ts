@@ -26,7 +26,7 @@ export const commands = [
   },
   {
     name: "pbem",
-    description: "Create a play-by-email game",
+    description: "Create a game; Discord has no native teams, use /pbem-teams after creation",
     options: [
       {
         type: 3,
