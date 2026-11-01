@@ -1193,10 +1193,10 @@ async function processNoDbBoardButton(
   }
 }
 
-function pendingUserIds(snapshot: GameSnapshot): string[] {
-  return snapshot.players
+export function pendingUserIds(players: GameSnapshot["players"]): string[] {
+  return players
     .filter((player) => player.status === "pending")
-    .map((player) => player.userId);
+    .flatMap((player) => player.notificationUserIds ?? [player.userId]);
 }
 
 async function sendPendingReminder(
@@ -1486,7 +1486,7 @@ async function processReminder(
       });
       return;
     }
-    const pending = pendingUserIds(snapshot);
+    const pending = pendingUserIds(snapshot.players);
     if (pending.length > 0) {
       await sendPendingReminder(snapshot.game.channelId, config.botToken, snapshot, pending);
     }

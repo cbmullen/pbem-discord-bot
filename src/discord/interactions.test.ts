@@ -5,6 +5,7 @@ import {
   activeGameChoices,
   commandHelpContent,
   handleDiscordRequest,
+  pendingUserIds,
   splitMessage,
   verifyDiscordSignature,
 } from "./interactions.js";
@@ -48,6 +49,37 @@ test("/pbem-help gives command-specific help or the full guide link", () => {
   assert.match(commandHelpContent("pbem-teams"), /user-guide\.html/);
   assert.match(commandHelpContent(), /^\*\*PBEM Discord Bot User Guide\*\*/);
   assert.match(commandHelpContent(), /user-guide\.html/);
+});
+
+test("manual reminder recipients include every pending team member", () => {
+  const players = [
+    {
+      userId: "jill-id",
+      username: "Jill / Jack",
+      notificationUserIds: ["jill-id", "jack-id"],
+      position: 0,
+      status: "pending" as const,
+      pendingSince: "2026-11-01T00:00:00.000Z",
+      lastUpdatedAt: "2026-11-01T00:00:00.000Z",
+    },
+    {
+      userId: "sam-id",
+      username: "Sam",
+      position: 1,
+      status: "pending" as const,
+      pendingSince: "2026-11-01T00:00:00.000Z",
+      lastUpdatedAt: "2026-11-01T00:00:00.000Z",
+    },
+    {
+      userId: "done-id",
+      username: "Done",
+      position: 2,
+      status: "done" as const,
+      pendingSince: null,
+      lastUpdatedAt: "2026-11-01T00:00:00.000Z",
+    },
+  ];
+  assert.deepEqual(pendingUserIds(players), ["jill-id", "jack-id", "sam-id"]);
 });
 
 function signedRequest(body: Buffer, timestamp = Math.floor(Date.now() / 1000).toString()): Request {
