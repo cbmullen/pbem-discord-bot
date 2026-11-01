@@ -1,6 +1,9 @@
 const DISCORD_API = "https://discord.com/api/v10";
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 const MAX_CONCURRENT_GUILD_LOOKUPS = 5;
+const GUILD_LOOKUP_TIMEOUT_MS = 10_000;
+const MAX_RATE_LIMIT_RETRIES = 2;
+const DEFAULT_RETRY_DELAY_MS = 250;
 
 interface CachedGuildName {
   name: string;
@@ -36,9 +39,31 @@ export async function resolveGuildNames(
   }
 
   async function resolveName(guildId: string): Promise<string> {
-    const response = await request(`${DISCORD_API}/guilds/${encodeURIComponent(guildId)}`, {
-      headers: { Authorization: `Bot ${botToken}` },
-    });
+    const url = `${DISCORD_API}/guilds/${encodeURIComponent(guildId)}`;
+    const deadline = Date.now() + GUILD_LOOKUP_TIMEOUT_MS;
+    let response: Response;
+
+    for (let retry = 0; ; retry += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw new Error("Discord guild lookup timed out.");
+      response = await request(url, {
+        headers: { Authorization: `Bot ${botToken}` },
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      if (response.status !== 429 || retry >= MAX_RATE_LIMIT_RETRIES) break;
+
+      const retryAfter = response.headers.get("Retry-After");
+      const retryAfterMs = retryAfter === null
+        ? DEFAULT_RETRY_DELAY_MS
+        : Number.isFinite(Number(retryAfter))
+          ? Number(retryAfter) * 1000
+          : Date.parse(retryAfter) - Date.now();
+      const delayMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+        ? retryAfterMs
+        : DEFAULT_RETRY_DELAY_MS;
+      if (Date.now() + delayMs >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
 
     if (response.status === 403 || response.status === 404 || response.status === 429) {
       return "Unavailable server";

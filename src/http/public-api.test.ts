@@ -66,6 +66,7 @@ test("guild names are resolved using the bot without returning guild IDs in page
   const names = await resolveGuildNames([guildId, guildId], "test-token", async (input, init) => {
     requestedUrl = String(input);
     authorization = new Headers(init?.headers).get("Authorization") ?? "";
+    assert.ok(init?.signal instanceof AbortSignal);
     return Response.json({ name: "Example server" });
   });
 
@@ -101,16 +102,34 @@ test("inaccessible Discord guilds do not prevent public status from resolving ot
 test("Discord throttling labels only that server as unavailable", async () => {
   const throttledGuildId = `throttled-guild-${Date.now()}`;
   const availableGuildId = `unthrottled-guild-${Date.now()}`;
+  let throttledRequests = 0;
   const names = await resolveGuildNames(
     [throttledGuildId, availableGuildId],
     "test-token",
-    async (input) =>
-      String(input) === `https://discord.com/api/v10/guilds/${throttledGuildId}`
-        ? new Response(null, { status: 429, headers: { "Retry-After": "1" } })
-        : Response.json({ name: "Available server" }),
+    async (input) => {
+      if (String(input) !== `https://discord.com/api/v10/guilds/${throttledGuildId}`) {
+        return Response.json({ name: "Available server" });
+      }
+      throttledRequests += 1;
+      return new Response(null, { status: 429, headers: { "Retry-After": "0" } });
+    },
   );
   assert.equal(names.get(throttledGuildId), "Unavailable server");
   assert.equal(names.get(availableGuildId), "Available server");
+  assert.equal(throttledRequests, 3);
+});
+
+test("Discord guild lookups retry a 429 after the Retry-After delay", async () => {
+  const guildId = `retry-guild-${Date.now()}`;
+  let requests = 0;
+  const names = await resolveGuildNames([guildId], "test-token", async () => {
+    requests += 1;
+    return requests === 1
+      ? new Response(null, { status: 429, headers: { "Retry-After": "0" } })
+      : Response.json({ name: "Recovered server" });
+  });
+  assert.equal(requests, 2);
+  assert.equal(names.get(guildId), "Recovered server");
 });
 
 test("guild name lookups are limited to five concurrent Discord requests", async () => {
