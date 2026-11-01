@@ -88,6 +88,39 @@ test("inaccessible Discord guilds do not prevent public status from resolving ot
   assert.equal(names.get(availableGuildId), "Available server");
 });
 
+test("Discord throttling labels only that server as unavailable", async () => {
+  const throttledGuildId = `throttled-guild-${Date.now()}`;
+  const availableGuildId = `unthrottled-guild-${Date.now()}`;
+  const names = await resolveGuildNames(
+    [throttledGuildId, availableGuildId],
+    "test-token",
+    async (input) =>
+      String(input) === `https://discord.com/api/v10/guilds/${throttledGuildId}`
+        ? new Response(null, { status: 429, headers: { "Retry-After": "1" } })
+        : Response.json({ name: "Available server" }),
+  );
+  assert.equal(names.get(throttledGuildId), "Unavailable server");
+  assert.equal(names.get(availableGuildId), "Available server");
+});
+
+test("guild name lookups are limited to five concurrent Discord requests", async () => {
+  const guildIds = Array.from({ length: 12 }, (_, index) =>
+    `concurrency-test-${Date.now()}-${index}`,
+  );
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
+  const names = await resolveGuildNames(guildIds, "test-token", async () => {
+    activeRequests += 1;
+    maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeRequests -= 1;
+    return Response.json({ name: "Example server" });
+  });
+
+  assert.equal(names.size, guildIds.length);
+  assert.equal(maxActiveRequests, 5);
+});
+
 test("public game data includes server names without guild IDs", () => {
   const [game] = addServerNames(
     [{

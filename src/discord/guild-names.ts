@@ -1,5 +1,6 @@
 const DISCORD_API = "https://discord.com/api/v10";
 const CACHE_DURATION_MS = 5 * 60 * 1000;
+const MAX_CONCURRENT_GUILD_LOOKUPS = 5;
 
 interface CachedGuildName {
   name: string;
@@ -30,13 +31,13 @@ export async function resolveGuildNames(
     }
   }
 
-  const resolved = await Promise.all(uncachedIds.map(async (guildId) => {
+  async function resolveName(guildId: string): Promise<string> {
     const response = await request(`${DISCORD_API}/guilds/${encodeURIComponent(guildId)}`, {
       headers: { Authorization: `Bot ${botToken}` },
     });
 
-    if (response.status === 403 || response.status === 404) {
-      return [guildId, "Unavailable server"] as const;
+    if (response.status === 403 || response.status === 404 || response.status === 429) {
+      return "Unavailable server";
     }
     if (!response.ok) {
       throw new Error(
@@ -54,9 +55,18 @@ export async function resolveGuildNames(
       name,
       expiresAt: Date.now() + CACHE_DURATION_MS,
     });
-    return [guildId, name] as const;
-  }));
+    return name;
+  }
 
-  for (const [guildId, name] of resolved) names.set(guildId, name);
+  let nextIndex = 0;
+  await Promise.all(Array.from(
+    { length: Math.min(MAX_CONCURRENT_GUILD_LOOKUPS, uncachedIds.length) },
+    async () => {
+      while (nextIndex < uncachedIds.length) {
+        const guildId = uncachedIds[nextIndex++]!;
+        names.set(guildId, await resolveName(guildId));
+      }
+    },
+  ));
   return names;
 }
